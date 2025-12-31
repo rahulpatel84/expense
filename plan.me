@@ -1,0 +1,747 @@
+Stage 1: Authentication System Implementation Plan
+Overview
+Build a production-ready authentication system with signup, login, email verification, password reset, and forgot password flows. Both backend (NestJS) and frontend (React) will be built together for end-to-end functionality.
+Scope for Stage 1
+✅ Included
+User signup with email/password
+User login with email/password
+Email verification flow (with real SendGrid emails)
+Forgot password flow
+Password reset flow
+JWT token management (access + refresh tokens)
+Session management in Redis
+Rate limiting and account lockout
+Security features (bcrypt, CORS, security headers)
+Audit logging
+Modern Material Design UI with gradients
+❌ Excluded (Stage 2+)
+Google OAuth (add later)
+Session management UI (view/logout devices)
+Expense tracking features
+Dashboard analytics
+Implementation Phases
+Phase 0: Environment Setup & Service Configuration
+Goal: Set up external services and get all credentials
+Step 0.1: Supabase PostgreSQL Setup
+Create Supabase account at https://supabase.com
+Create new project (choose closest region)
+Wait for database provisioning (~2 minutes)
+Navigate to Project Settings > Database
+Copy connection string (format: postgresql://postgres:[password]@db.xxxxx.supabase.co:5432/postgres)
+Save credentials:
+DATABASE_URL (connection string)
+SUPABASE_URL (https://xxxxx.supabase.co)
+SUPABASE_ANON_KEY (from API settings)
+SUPABASE_SERVICE_ROLE_KEY (from API settings)
+Step 0.2: Upstash Redis Setup
+Create Upstash account at https://upstash.com
+Create new Redis database (free tier, Global region)
+Copy connection URL from dashboard
+Save credentials:
+REDIS_URL (format: rediss://default:[password]@xxxxx.upstash.io:6379)
+Step 0.3: SendGrid Setup
+Create SendGrid account at https://sendgrid.com
+Choose free plan (100 emails/day)
+Complete sender verification:
+Settings > Sender Authentication
+Verify single sender email (e.g., noreply@yourdomain.com or personal email)
+Create API Key:
+Settings > API Keys > Create API Key
+Full Access permissions
+Save credentials:
+SENDGRID_API_KEY (SG.xxxxx)
+SENDGRID_FROM_EMAIL (verified email)
+SENDGRID_FROM_NAME (e.g., "ExpenseAI Team")
+Step 0.4: Generate JWT Secret
+Generate secure 256-bit secret:
+
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+Save as JWT_SECRET
+Phase 1: Project Initialization
+Goal: Create backend and frontend projects with proper structure
+Step 1.1: Initialize Git Repository
+
+cd /Users/rahul/Desktop/Projects/expense-tracker
+git init
+echo "node_modules" > .gitignore
+echo ".env" >> .gitignore
+echo ".DS_Store" >> .gitignore
+echo "dist" >> .gitignore
+echo "build" >> .gitignore
+Step 1.2: Create Backend (NestJS)
+
+# Create backend directory
+mkdir backend
+cd backend
+
+# Initialize NestJS project (manually to avoid CLI overhead)
+npm init -y
+
+# Install NestJS core dependencies
+npm install @nestjs/common @nestjs/core @nestjs/platform-express @nestjs/config reflect-metadata rxjs
+
+# Install database & ORM
+npm install @prisma/client prisma
+npm install -D prisma
+
+# Install authentication dependencies
+npm install @nestjs/jwt @nestjs/passport passport passport-jwt bcrypt
+npm install -D @types/bcrypt @types/passport-jwt
+
+# Install Redis
+npm install ioredis
+npm install -D @types/ioredis
+
+# Install email & queue
+npm install @sendgrid/mail bullmq
+
+# Install validation & security
+npm install class-validator class-transformer @nestjs/throttler helmet
+
+# Install development dependencies
+npm install -D @nestjs/cli @nestjs/schematics typescript @types/node ts-node ts-loader
+
+# Install testing dependencies
+npm install -D @nestjs/testing jest @types/jest ts-jest supertest @types/supertest
+Step 1.3: Create Frontend (React + Vite)
+
+cd /Users/rahul/Desktop/Projects/expense-tracker
+
+# Create frontend with Vite
+npm create vite@latest frontend -- --template react-ts
+
+cd frontend
+
+# Install dependencies
+npm install
+
+# Install routing & state management
+npm install react-router-dom zustand @tanstack/react-query
+
+# Install form handling
+npm install react-hook-form @hookform/resolvers zod
+
+# Install UI & styling
+npm install tailwindcss postcss autoprefixer
+npx tailwindcss init -p
+
+# Install shadcn/ui dependencies
+npm install class-variance-authority clsx tailwind-merge lucide-react
+
+# Install axios for API calls
+npm install axios
+
+# Install date/time utilities
+npm install date-fns
+Step 1.4: Create Project Structure
+Backend structure:
+
+backend/
+├── src/
+│   ├── modules/
+│   │   └── auth/
+│   │       ├── auth.controller.ts
+│   │       ├── auth.service.ts
+│   │       ├── auth.module.ts
+│   │       ├── dto/
+│   │       │   ├── signup.dto.ts
+│   │       │   ├── login.dto.ts
+│   │       │   ├── forgot-password.dto.ts
+│   │       │   └── reset-password.dto.ts
+│   │       ├── strategies/
+│   │       │   └── jwt.strategy.ts
+│   │       └── guards/
+│   │           └── jwt-auth.guard.ts
+│   ├── common/
+│   │   ├── decorators/
+│   │   │   └── current-user.decorator.ts
+│   │   ├── filters/
+│   │   │   └── http-exception.filter.ts
+│   │   └── interceptors/
+│   │       └── response.interceptor.ts
+│   ├── services/
+│   │   ├── prisma.service.ts
+│   │   ├── redis.service.ts
+│   │   ├── email.service.ts
+│   │   └── audit.service.ts
+│   ├── app.module.ts
+│   └── main.ts
+├── prisma/
+│   └── schema.prisma
+├── .env
+├── .env.example
+├── package.json
+├── tsconfig.json
+└── nest-cli.json
+Frontend structure:
+
+frontend/
+├── src/
+│   ├── features/
+│   │   └── auth/
+│   │       ├── components/
+│   │       │   ├── SignupForm.tsx
+│   │       │   ├── LoginForm.tsx
+│   │       │   ├── ForgotPasswordForm.tsx
+│   │       │   └── ResetPasswordForm.tsx
+│   │       ├── hooks/
+│   │       │   └── useAuth.ts
+│   │       ├── services/
+│   │       │   └── authService.ts
+│   │       ├── types/
+│   │       │   └── auth.types.ts
+│   │       └── pages/
+│   │           ├── SignupPage.tsx
+│   │           ├── LoginPage.tsx
+│   │           ├── ForgotPasswordPage.tsx
+│   │           ├── ResetPasswordPage.tsx
+│   │           └── VerifyEmailPage.tsx
+│   ├── shared/
+│   │   ├── components/
+│   │   │   ├── Button.tsx
+│   │   │   ├── Input.tsx
+│   │   │   ├── Card.tsx
+│   │   │   └── Toast.tsx
+│   │   ├── hooks/
+│   │   │   └── useToast.ts
+│   │   └── lib/
+│   │       ├── axios.ts
+│   │       └── utils.ts
+│   ├── store/
+│   │   └── authStore.ts
+│   ├── styles/
+│   │   └── globals.css
+│   ├── App.tsx
+│   ├── main.tsx
+│   └── router.tsx
+├── .env
+├── .env.example
+├── package.json
+├── tsconfig.json
+├── vite.config.ts
+└── tailwind.config.js
+Phase 2: Backend Core Setup
+Goal: Set up NestJS with database, Redis, and core services
+Step 2.1: Create Prisma Schema
+File: backend/prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                    String    @id @default(uuid())
+  fullName              String    @map("full_name")
+  email                 String    @unique
+  passwordHash          String    @map("password_hash")
+  avatarUrl             String?   @map("avatar_url")
+  currencyCode          String    @default("USD") @map("currency_code")
+  emailVerified         Boolean   @default(false) @map("email_verified")
+  onboardingCompleted   Boolean   @default(false) @map("onboarding_completed")
+  lockedUntil           DateTime? @map("locked_until")
+  failedLoginAttempts   Int       @default(0) @map("failed_login_attempts")
+  lastFailedLoginAt     DateTime? @map("last_failed_login_at")
+  lastLoginAt           DateTime? @map("last_login_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  passwordResets        PasswordReset[]
+  emailVerifications    EmailVerification[]
+  auditLogs             AuditLog[]
+
+  @@map("users")
+}
+
+model PasswordReset {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  tokenHash   String    @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("password_resets")
+}
+
+model EmailVerification {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  email       String
+  tokenHash   String    @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  verifiedAt  DateTime? @map("verified_at")
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("email_verifications")
+}
+
+model AuditLog {
+  id            String    @id @default(uuid())
+  userId        String?   @map("user_id")
+  action        String
+  resourceType  String?   @map("resource_type")
+  resourceId    String?   @map("resource_id")
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @map("user_agent")
+  metadata      Json?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+Step 2.2: Create Environment Files
+Backend .env.example:
+
+NODE_ENV=development
+PORT=3000
+
+# Database (Supabase)
+DATABASE_URL=postgresql://postgres:[password]@db.xxxxx.supabase.co:5432/postgres
+
+# Redis (Upstash)
+REDIS_URL=rediss://default:[password]@xxxxx.upstash.io:6379
+
+# JWT
+JWT_SECRET=your-256-bit-secret-key-here
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=30d
+
+# Email (SendGrid)
+SENDGRID_API_KEY=SG.xxxxx
+SENDGRID_FROM_EMAIL=noreply@expenseai.com
+SENDGRID_FROM_NAME=ExpenseAI Team
+
+# Frontend URL (for email links)
+FRONTEND_URL=http://localhost:5173
+
+# Supabase (optional, for future use)
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=xxxxx
+Frontend .env.example:
+
+VITE_API_URL=http://localhost:3000
+Step 2.3: Core Service Files
+Files to create:
+backend/src/services/prisma.service.ts - Database connection
+backend/src/services/redis.service.ts - Redis connection
+backend/src/services/email.service.ts - SendGrid email service
+backend/src/services/audit.service.ts - Audit logging service
+Step 2.4: NestJS Configuration
+Files to create:
+backend/src/main.ts - Application entry point with CORS, security headers
+backend/src/app.module.ts - Root module with all imports
+backend/nest-cli.json - NestJS CLI configuration
+backend/tsconfig.json - TypeScript configuration
+Phase 3: Authentication Backend Implementation
+Goal: Build all authentication endpoints and business logic
+Step 3.1: DTOs (Data Transfer Objects)
+Files to create:
+backend/src/modules/auth/dto/signup.dto.ts
+Fields: fullName, email, password, currencyCode
+Validation: email format, password strength (min 8, uppercase, lowercase, number)
+backend/src/modules/auth/dto/login.dto.ts
+Fields: email, password
+Validation: required fields, email format
+backend/src/modules/auth/dto/forgot-password.dto.ts
+Fields: email
+Validation: email format
+backend/src/modules/auth/dto/reset-password.dto.ts
+Fields: token, newPassword
+Validation: password strength
+Step 3.2: JWT Strategy & Guards
+Files to create:
+backend/src/modules/auth/strategies/jwt.strategy.ts
+Validate JWT tokens
+Extract user from payload
+Check session in Redis
+backend/src/modules/auth/guards/jwt-auth.guard.ts
+Protect routes requiring authentication
+Return 401 for invalid/expired tokens
+Step 3.3: Auth Service (Core Business Logic)
+File: backend/src/modules/auth/auth.service.ts Methods to implement:
+signup(signupDto, ip) - Create user, hash password, generate tokens, queue verification email
+login(loginDto, ip, userAgent) - Validate credentials, check lockout, generate tokens, create session
+logout(userId, sessionId) - Invalidate session, blacklist refresh token
+refreshTokens(refreshToken) - Validate refresh token, generate new access token
+forgotPassword(email, ip) - Generate reset token, send email
+resetPassword(token, newPassword) - Validate token, update password, invalidate sessions
+verifyEmail(token) - Validate verification token, update email_verified flag
+resendVerification(userId) - Generate new verification token, send email
+Helper methods:
+hashPassword(password) - bcrypt hash with 10 rounds
+comparePassword(password, hash) - bcrypt compare
+generateAccessToken(user) - Create JWT (15 min expiry)
+generateRefreshToken() - Create random UUID
+createSession(userId, refreshToken, deviceInfo) - Store in Redis
+validateSession(userId, sessionId) - Check Redis
+incrementFailedAttempts(userId) - Track login failures
+lockAccount(userId) - Lock for 30 minutes
+checkAccountLocked(user) - Verify lockout status
+Step 3.4: Auth Controller (API Endpoints)
+File: backend/src/modules/auth/auth.controller.ts Endpoints to implement:
+POST /auth/signup - User registration
+POST /auth/login - User login
+POST /auth/logout - Logout (requires auth)
+POST /auth/refresh - Refresh access token
+POST /auth/forgot-password - Request password reset
+POST /auth/reset-password - Set new password
+GET /auth/verify-email?token=xxx - Verify email
+POST /auth/resend-verification - Resend verification email (requires auth)
+Each endpoint includes:
+DTO validation
+Rate limiting
+Error handling
+Audit logging
+Proper HTTP status codes
+Step 3.5: Rate Limiting & Security
+Files to create:
+Configure ThrottlerModule in auth.module.ts
+Global: 100 requests / 15 min
+Signup: 5 requests / 15 min
+Login: 10 requests / 15 min
+Forgot password: 3 requests / 60 min
+Security middleware in main.ts:
+Helmet for security headers
+CORS configuration
+Cookie parser for refresh tokens
+Phase 4: Frontend Core Setup
+Goal: Set up React with routing, state management, and API client
+Step 4.1: Tailwind & Design System Configuration
+File: frontend/tailwind.config.js Configure with:
+Colors from UI spec (primary blue #2563EB, secondary purple #7C3AED)
+Spacing scale (4, 8, 12, 16, 24, 32, 48, 64px)
+Border radius (8px inputs, 12px cards)
+Custom gradients
+Inter font family
+File: frontend/src/styles/globals.css Import Tailwind and define custom CSS variables.
+Step 4.2: API Client Configuration
+File: frontend/src/shared/lib/axios.ts Configure axios instance with:
+Base URL from env
+Request interceptor (add access token to headers)
+Response interceptor (handle 401, auto-refresh tokens)
+Error handling
+Timeout configuration
+Step 4.3: Auth Store (Zustand)
+File: frontend/src/store/authStore.ts State management for:
+User object (id, email, fullName, avatarUrl, emailVerified)
+Access token (stored in memory only)
+isAuthenticated boolean
+isLoading boolean
+Actions:
+setUser(user) - Update user data
+setTokens(accessToken) - Store access token in memory
+logout() - Clear state and remove cookies
+updateUser(data) - Partial user update
+Step 4.4: Router Configuration
+File: frontend/src/router.tsx Routes:
+/ - Landing page (redirect to /login if not authenticated)
+/login - Login page
+/signup - Signup page
+/forgot-password - Forgot password page
+/reset-password?token=xxx - Reset password page
+/verify-email?token=xxx - Email verification page
+/dashboard - Dashboard (protected, placeholder for now)
+Protected route wrapper to check authentication.
+Phase 5: Frontend UI Components
+Goal: Build reusable components and authentication pages
+Step 5.1: Shared Components (shadcn/ui style)
+Files to create:
+frontend/src/shared/components/Button.tsx
+Variants: primary (gradient), secondary (white border), ghost
+Sizes: sm, md, lg
+Loading state
+Disabled state
+frontend/src/shared/components/Input.tsx
+Text, email, password types
+Label, error message, helper text
+Focus ring with primary color
+Password visibility toggle
+frontend/src/shared/components/Card.tsx
+White background
+12px border radius
+Elevation 1 shadow
+Hover elevation 2
+frontend/src/shared/components/Toast.tsx
+Success, error, warning, info variants
+Auto-dismiss after 5 seconds
+Position: top-right
+Slide-in animation
+Step 5.2: Auth Service Layer
+File: frontend/src/features/auth/services/authService.ts API methods:
+signup(data) - POST /auth/signup
+login(data) - POST /auth/login
+logout() - POST /auth/logout
+refreshTokens() - POST /auth/refresh
+forgotPassword(email) - POST /auth/forgot-password
+resetPassword(token, password) - POST /auth/reset-password
+verifyEmail(token) - GET /auth/verify-email
+resendVerification() - POST /auth/resend-verification
+All methods use the configured axios instance.
+Step 5.3: Auth Hook
+File: frontend/src/features/auth/hooks/useAuth.ts Custom hook wrapping TanStack Query:
+useSignup() - Mutation for signup
+useLogin() - Mutation for login
+useLogout() - Mutation for logout
+useForgotPassword() - Mutation for forgot password
+useResetPassword() - Mutation for reset password
+useVerifyEmail() - Mutation for email verification
+Each mutation includes:
+Loading states
+Error handling
+Success callbacks (update auth store, redirect)
+Toast notifications
+Step 5.4: Auth Pages
+1. Signup Page (frontend/src/features/auth/pages/SignupPage.tsx) 2-column layout:
+Left: White card with signup form
+Full name input
+Email input
+Password input (with strength indicator)
+Currency dropdown (USD, EUR, GBP, etc.)
+Terms checkbox
+Signup button (gradient)
+Link to login page
+Right: Gradient background with animated graphics/shapes
+Form validation with Zod:
+Full name: 2-255 characters
+Email: valid format, required
+Password: min 8 chars, 1 uppercase, 1 lowercase, 1 number
+Currency: required
+Terms: must be checked
+On success: Show toast, redirect to dashboard with verification banner 2. Login Page (frontend/src/features/auth/pages/LoginPage.tsx) 2-column layout:
+Left: White card with login form
+Email input
+Password input
+"Remember me" checkbox (optional for V1)
+Login button (gradient)
+"Forgot password?" link
+"Don't have an account?" link to signup
+Right: Gradient background with animated graphics
+On success: Show toast, redirect to dashboard On error: Show error message (don't specify if email or password wrong) 3. Forgot Password Page (frontend/src/features/auth/pages/ForgotPasswordPage.tsx) Centered card layout:
+Email input
+Submit button
+Back to login link
+Always show success message (don't reveal if email exists): "If an account exists with that email, you'll receive a reset link" 4. Reset Password Page (frontend/src/features/auth/pages/ResetPasswordPage.tsx) Centered card layout:
+Extract token from URL query params
+Validate token on mount (API call)
+If token valid: Show form
+New password input (with strength indicator)
+Confirm password input
+Reset button
+If token invalid/expired: Show error with "Request new link" button
+On success: Show success toast, redirect to login 5. Email Verification Page (frontend/src/features/auth/pages/VerifyEmailPage.tsx) Centered card layout:
+Extract token from URL query params
+Auto-verify on mount (API call)
+Show loading spinner
+If success: Show success message with checkmark icon, auto-redirect to dashboard after 3 seconds
+If error: Show error message with "Resend verification" button
+Phase 6: Integration & Testing
+Goal: Connect frontend to backend, test all flows end-to-end
+Step 6.1: Backend Testing
+Start PostgreSQL (Supabase)
+Run Prisma migrations: npx prisma migrate dev
+Start Redis (Upstash - already running)
+Start NestJS: npm run start:dev
+Test endpoints with Postman/cURL:
+POST /auth/signup
+POST /auth/login
+POST /auth/forgot-password
+POST /auth/reset-password
+GET /auth/verify-email
+Verify:
+Database records created
+Sessions stored in Redis
+Emails sent via SendGrid
+Tokens generated correctly
+Rate limiting works
+Account lockout after 5 failed attempts
+Step 6.2: Frontend Testing
+Start Vite dev server: npm run dev
+Test each page:
+Signup flow (form validation, API call, success redirect)
+Login flow (authentication, token storage, redirect)
+Forgot password (email submission, success message)
+Reset password (token validation, password reset)
+Email verification (token validation, success)
+Verify:
+Form validations work
+Error messages display correctly
+Loading states show
+Toast notifications appear
+Redirects work
+Tokens stored correctly
+API errors handled gracefully
+Step 6.3: End-to-End Testing
+Complete user journeys: Journey 1: New User Signup
+Visit /signup
+Fill form with valid data
+Submit → Account created
+Redirected to dashboard with "Verify email" banner
+Check email inbox for verification link
+Click link → Email verified
+Banner disappears
+Journey 2: Existing User Login
+Visit /login
+Enter email/password
+Submit → Authenticated
+Redirected to dashboard
+Journey 3: Forgot Password
+Visit /login
+Click "Forgot password?"
+Enter email → Success message shown
+Check email inbox for reset link
+Click link → Reset password page
+Enter new password → Password reset
+Redirected to login
+Login with new password → Success
+Journey 4: Failed Login Attempts
+Visit /login
+Enter wrong password 5 times
+Account locked for 30 minutes
+Receive email notification
+Wait 30 minutes or use password reset
+Login successfully
+Phase 7: Polish & Documentation
+Goal: Final touches, documentation, deployment preparation
+Step 7.1: Error Handling Polish
+Consistent error messages across all forms
+Network error handling (retry logic)
+Validation error display (inline + toast)
+Empty states for pages
+Loading skeletons
+Step 7.2: UI Polish
+Add animations (fade-in, slide-up)
+Password strength indicator colors (red/yellow/green)
+Form focus states
+Button hover/active states
+Responsive design (mobile, tablet, desktop)
+Dark mode preparation (optional)
+Step 7.3: Documentation
+Create README files: Backend README:
+Installation instructions
+Environment variables
+Running migrations
+Starting the server
+API endpoints documentation
+Testing guide
+Frontend README:
+Installation instructions
+Environment variables
+Starting dev server
+Building for production
+Component documentation
+Step 7.4: Security Checklist
+ Passwords hashed with bcrypt
+ JWT secrets in environment variables
+ Refresh tokens in httpOnly cookies
+ CORS configured correctly
+ Rate limiting on all auth endpoints
+ Account lockout implemented
+ SQL injection prevented (Prisma)
+ XSS prevented (React escapes by default)
+ Security headers set (Helmet)
+ Audit logging working
+ HTTPS enforced in production
+Success Criteria
+Backend
+ All 8 API endpoints working
+ Database tables created via Prisma
+ Redis sessions storing correctly
+ Emails sending via SendGrid
+ JWT tokens generating and validating
+ Rate limiting preventing abuse
+ Account lockout after 5 failures
+ Audit logs recording events
+ Password hashing with bcrypt
+ API responses < 500ms
+Frontend
+ All 5 pages rendering correctly
+ Forms validating with Zod
+ API calls working via axios
+ Tokens stored securely
+ Auto-refresh tokens working
+ Routing protecting authenticated routes
+ Toast notifications showing
+ Responsive on mobile/tablet/desktop
+ Loading states displaying
+ Error handling graceful
+End-to-End
+ User can signup successfully
+ User receives verification email
+ User can verify email
+ User can login
+ User can logout
+ User can reset forgotten password
+ Failed login attempts lock account
+ Rate limiting works on all endpoints
+File Checklist
+Critical Files to Create (Backend)
+backend/prisma/schema.prisma - Database schema
+backend/src/main.ts - NestJS entry point
+backend/src/app.module.ts - Root module
+backend/src/services/prisma.service.ts - Database service
+backend/src/services/redis.service.ts - Redis service
+backend/src/services/email.service.ts - SendGrid service
+backend/src/services/audit.service.ts - Audit logging
+backend/src/modules/auth/auth.controller.ts - Auth endpoints
+backend/src/modules/auth/auth.service.ts - Auth business logic
+backend/src/modules/auth/auth.module.ts - Auth module
+backend/src/modules/auth/dto/*.ts - 4 DTO files
+backend/src/modules/auth/strategies/jwt.strategy.ts - JWT validation
+backend/src/modules/auth/guards/jwt-auth.guard.ts - Route protection
+backend/.env - Environment variables
+backend/package.json - Dependencies
+backend/tsconfig.json - TypeScript config
+Critical Files to Create (Frontend)
+frontend/src/router.tsx - React Router setup
+frontend/src/store/authStore.ts - Zustand auth store
+frontend/src/shared/lib/axios.ts - API client
+frontend/src/shared/components/Button.tsx - Button component
+frontend/src/shared/components/Input.tsx - Input component
+frontend/src/shared/components/Card.tsx - Card component
+frontend/src/shared/components/Toast.tsx - Toast notifications
+frontend/src/features/auth/services/authService.ts - Auth API calls
+frontend/src/features/auth/hooks/useAuth.ts - Auth hooks
+frontend/src/features/auth/pages/SignupPage.tsx - Signup page
+frontend/src/features/auth/pages/LoginPage.tsx - Login page
+frontend/src/features/auth/pages/ForgotPasswordPage.tsx - Forgot password
+frontend/src/features/auth/pages/ResetPasswordPage.tsx - Reset password
+frontend/src/features/auth/pages/VerifyEmailPage.tsx - Email verification
+frontend/src/styles/globals.css - Global styles
+frontend/tailwind.config.js - Tailwind config
+frontend/.env - Environment variables
+frontend/package.json - Dependencies
+Estimated Implementation Order
+Day 1: Environment setup, project initialization, Prisma schema
+Day 2: Backend core services (Prisma, Redis, Email, Audit)
+Day 3: Backend auth service and controller
+Day 4: Frontend shared components and router setup
+Day 5: Frontend auth pages (signup, login)
+Day 6: Frontend auth pages (forgot/reset password, verify email)
+Day 7: Integration testing and bug fixes
+Day 8: Polish, documentation, deployment prep
+Next Steps After Stage 1
+Once authentication is complete and tested:
+Stage 2: Google OAuth integration
+Stage 3: Session management UI (view/logout devices)
+Stage 4: Expense CRUD operations
+Stage 5: Categories and budgets
+Stage 6: Dashboard with analytics
+Stage 7: Family sharing
+Stage 8: AI features and receipt OCR

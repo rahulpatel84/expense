@@ -1,0 +1,93 @@
+// Prisma Schema for ExpenseAI Authentication System
+// This defines the database structure for users, auth, and audit logging
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Using direct connection for now - pooler has authentication issues
+  url      = env("DATABASE_URL")
+}
+
+// User Model - Core user account information
+model User {
+  id                    String    @id @default(uuid())
+  fullName              String    @map("full_name")
+  email                 String    @unique
+  passwordHash          String    @map("password_hash")
+  avatarUrl             String?   @map("avatar_url")
+  currencyCode          String    @default("USD") @map("currency_code")
+  emailVerified         Boolean   @default(false) @map("email_verified")
+  onboardingCompleted   Boolean   @default(false) @map("onboarding_completed")
+  lockedUntil           DateTime? @map("locked_until")
+  failedLoginAttempts   Int       @default(0) @map("failed_login_attempts")
+  lastFailedLoginAt     DateTime? @map("last_failed_login_at")
+  lastLoginAt           DateTime? @map("last_login_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  passwordResets        PasswordReset[]
+  emailVerifications    EmailVerification[]
+  auditLogs             AuditLog[]
+
+  @@map("users")
+}
+
+// Password Reset Model - Manages password reset tokens
+model PasswordReset {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  tokenHash   String    @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("password_resets")
+}
+
+// Email Verification Model - Manages email verification tokens
+model EmailVerification {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  email       String
+  tokenHash   String    @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  verifiedAt  DateTime? @map("verified_at")
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("email_verifications")
+}
+
+// Audit Log Model - Tracks all security-related events
+model AuditLog {
+  id            String    @id @default(uuid())
+  userId        String?   @map("user_id")
+  action        String
+  resourceType  String?   @map("resource_type")
+  resourceId    String?   @map("resource_id")
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @map("user_agent")
+  metadata      Json?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

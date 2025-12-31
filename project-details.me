@@ -1,0 +1,546 @@
+# 📝 Complete Project Prompt for Cursor IDE
+
+---
+
+```
+Build ExpenseAI - a production-grade SaaS expense tracking platform with custom authentication, family sharing, and AI-powered insights.
+
+## TECH STACK
+
+### Frontend
+- React 18 with TypeScript
+- Vite as build tool
+- TailwindCSS for styling
+- shadcn/ui components (Material Design inspired)
+- React Router v6 for navigation
+- TanStack Query (React Query) for data fetching and caching
+- Zustand for state management
+- React Hook Form + Zod for form validation
+- Recharts for data visualization
+- Framer Motion for animations
+- Lucide React for icons
+- Axios for HTTP requests
+
+### Backend
+- NestJS (Node.js TypeScript framework)
+- PostgreSQL database (hosted on Supabase)
+- Prisma ORM for database operations
+- Redis (Upstash) for sessions, caching, and rate limiting
+- Custom JWT authentication (bcrypt for password hashing)
+- Passport.js for OAuth strategies
+- BullMQ for job queues
+- class-validator for input validation
+- Swagger for API documentation
+
+### Infrastructure
+- Frontend hosting: Vercel
+- Backend hosting: Render (migrate to AWS later)
+- Database: Supabase PostgreSQL ($25/mo plan)
+- Cache/Sessions: Upstash Redis
+- File storage: Supabase Storage (avatars, receipts)
+- Email service: SendGrid (migrate to AWS SES later)
+- Monitoring: Sentry for error tracking
+
+### Authentication & Security
+- Custom JWT-based authentication (NOT using Supabase Auth)
+- Access tokens (15 min expiry, stored in memory)
+- Refresh tokens (30 days expiry, httpOnly cookies)
+- bcrypt password hashing (10 rounds)
+- Redis-based session management
+- Rate limiting (express-rate-limit)
+- Account lockout after 5 failed attempts
+- CORS protection
+- Security headers (helmet)
+- Input sanitization
+- SQL injection prevention via Prisma
+
+## DATABASE SCHEMA (Prisma)
+
+### users table
+- id (UUID, primary key)
+- full_name (VARCHAR 255)
+- email (VARCHAR 255, unique, indexed)
+- password_hash (VARCHAR 60, nullable for OAuth users)
+- avatar_url (TEXT, nullable)
+- currency_code (VARCHAR 3, default 'USD')
+- email_verified (BOOLEAN, default false)
+- onboarding_completed (BOOLEAN, default false)
+- locked_until (TIMESTAMP, nullable)
+- failed_login_attempts (INTEGER, default 0)
+- last_failed_login_at (TIMESTAMP, nullable)
+- last_login_at (TIMESTAMP, nullable)
+- created_at (TIMESTAMP)
+- updated_at (TIMESTAMP)
+
+### oauth_providers table
+- id (UUID, primary key)
+- user_id (UUID, foreign key to users)
+- provider (VARCHAR 50: 'google', 'facebook', etc.)
+- provider_user_id (VARCHAR 255)
+- provider_email (VARCHAR 255)
+- access_token (TEXT, nullable)
+- refresh_token (TEXT, nullable)
+- token_expires_at (TIMESTAMP, nullable)
+- profile_data (JSONB)
+- connected_at (TIMESTAMP)
+- last_synced_at (TIMESTAMP)
+- Unique constraint: (provider, provider_user_id)
+
+### password_resets table
+- id (UUID, primary key)
+- user_id (UUID, foreign key)
+- token_hash (VARCHAR 64, indexed)
+- expires_at (TIMESTAMP, indexed)
+- used_at (TIMESTAMP, nullable)
+- ip_address (INET)
+- created_at (TIMESTAMP)
+
+### email_verifications table
+- id (UUID, primary key)
+- user_id (UUID, foreign key)
+- email (VARCHAR 255)
+- token_hash (VARCHAR 64, indexed)
+- expires_at (TIMESTAMP)
+- verified_at (TIMESTAMP, nullable)
+- ip_address (INET)
+- created_at (TIMESTAMP)
+
+### audit_logs table
+- id (UUID, primary key)
+- user_id (UUID, nullable, indexed)
+- action (VARCHAR 100, indexed)
+- resource_type (VARCHAR 50)
+- resource_id (UUID)
+- ip_address (INET)
+- user_agent (TEXT)
+- metadata (JSONB)
+- created_at (TIMESTAMP, indexed)
+
+### Redis data structures (sessions)
+Key: session:{user_id}:{session_id}
+Value: JSON with user_id, refresh_token, device_name, device_type, os, browser, ip_address, location, is_active, created_at, last_accessed_at, expires_at
+TTL: 30 days
+
+## V1 FEATURES (Current Phase: Authentication)
+
+### Authentication System
+1. User Registration
+   - Email + password signup
+   - Full name, email, password, currency selection
+   - Password validation: min 8 chars, 1 uppercase, 1 lowercase, 1 number
+   - Email uniqueness check
+   - Password hashing with bcrypt (10 rounds)
+   - Generate JWT access token (15 min) and refresh token (30 days)
+   - Create session in Redis
+   - Queue email verification (async with BullMQ)
+   - Return tokens and user data
+
+2. User Login
+   - Email + password authentication
+   - Find user by email, compare password hash
+   - Rate limiting: 10 attempts per 15 min per IP
+   - Account lockout: 5 failed attempts = 30 min lock
+   - Generate new tokens on success
+   - Create new session in Redis
+   - Update last_login_at
+   - Log audit event
+   - Return tokens and user data
+
+3. Email Verification
+   - Send verification email with secure token (64 char random)
+   - Token expires in 24 hours
+   - Verify endpoint validates token, updates email_verified flag
+   - Mark token as used
+   - Resend verification option (rate limited: 3 per hour)
+
+4. Password Reset
+   - Forgot password: always return success (don't reveal if email exists)
+   - Generate secure reset token, store hash in database
+   - Token expires in 1 hour
+   - Send reset email with link
+   - Validate token endpoint
+   - Reset password: validate token, hash new password, invalidate all sessions
+   - Send confirmation email
+
+5. Token Management
+   - JWT access tokens: 15 min expiry, stored in React state
+   - Refresh tokens: 30 days expiry, httpOnly cookies
+   - Auto-refresh when access token expires (via Axios interceptor)
+   - Token rotation on refresh (optional, enhanced security)
+   - Blacklist revoked tokens in Redis (expires after 15 min)
+
+6. Session Management
+   - Store sessions in Redis with device info (browser, OS, IP, location)
+   - View active sessions endpoint
+   - Logout specific session
+   - Logout all devices
+   - Session expires after 30 days of inactivity
+
+7. Google OAuth
+   - OAuth 2.0 flow with Google
+   - State parameter for CSRF protection
+   - Exchange authorization code for access token
+   - Fetch user profile from Google
+   - Create account or link existing account (by email)
+   - Generate JWT tokens
+   - Create session
+
+8. Rate Limiting & Security
+   - Global: 100 requests per 15 min per IP
+   - Signup: 5 per 15 min per IP
+   - Login: 10 per 15 min per IP
+   - Forgot password: 3 per hour per email
+   - Account lockout after 5 failed login attempts
+   - Security audit logs for all auth events
+
+### Future Features (Post-Authentication)
+- Expense CRUD operations
+- Categories management
+- Payment methods
+- Budgets with progress tracking
+- Family sharing with roles and permissions
+- Dashboard with charts and analytics
+- Receipt upload with OCR
+- Income tracking
+- Real-time updates
+
+## API ROUTES (NestJS)
+
+### Authentication
+- POST /auth/signup
+- POST /auth/login
+- POST /auth/logout
+- POST /auth/refresh
+- POST /auth/forgot-password
+- POST /auth/reset-password
+- GET /auth/verify-email
+- POST /auth/resend-verification
+- GET /auth/google (initiate OAuth)
+- GET /auth/google/callback (OAuth callback)
+- POST /auth/google/disconnect
+
+### User Management
+- GET /users/me (get current user profile)
+- PATCH /users/me (update profile)
+- POST /users/me/avatar (upload avatar)
+- DELETE /users/me/avatar
+- POST /users/me/change-password
+- GET /users/me/sessions (list active sessions)
+- DELETE /users/me/sessions/:id (logout specific session)
+- DELETE /users/me/sessions (logout all devices)
+- GET /users/me/audit-logs (security history)
+
+## FRONTEND PAGES
+
+### Public Pages
+1. Landing page: 2-column layout (form + animated graphics)
+2. Login page: Email/password + Google OAuth button
+3. Signup page: Full name, email, password, currency, terms checkbox
+4. Forgot password page: Email input
+5. Reset password page: New password form (with token validation)
+6. Email verification page: Success/error states
+
+### Protected Pages (Post-Auth)
+7. Onboarding: Category selection (9 default categories)
+8. Dashboard: Stats cards, spending trend chart, budget progress, recent transactions
+9. Transactions list: Filterable, searchable, grouped by date
+10. Profile/Settings: Edit profile, change password, manage sessions
+
+## UI DESIGN SYSTEM
+
+### Colors
+Primary: #2563EB (Blue 600)
+Secondary: #7C3AED (Purple 600)
+Gradient: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%)
+Success: #10B981 (Green 500)
+Warning: #F59E0B (Amber 500)
+Error: #EF4444 (Red 500)
+Gray-900: #0F172A (Headings)
+Gray-700: #334155 (Body text)
+Gray-500: #64748B (Secondary text)
+Gray-100: #F1F5F9 (Backgrounds)
+White: #FFFFFF (Cards)
+
+### Typography
+Font: Inter (Google Fonts)
+Sizes: 32px (H1), 24px (H2), 18px (H3), 16px (Body), 14px (Small), 12px (Caption)
+Weights: 700 (Bold headings), 600 (Semibold buttons), 400 (Regular body)
+
+### Spacing
+Scale: 4px, 8px, 12px, 16px, 24px, 32px, 48px, 64px
+
+### Components
+Border radius: 8px (inputs), 12px (cards), 50% (avatars)
+Shadows: Material Design elevation system (1dp, 4dp, 8dp, 16dp)
+Buttons: Gradient primary, white secondary, transparent ghost
+Cards: White background, 1px border, 12px radius, elevation 1 shadow
+Inputs: 48px height, 16px font size (prevent iOS zoom), focus ring
+
+### Animations
+Duration: 100ms (micro), 250ms (standard), 400ms (complex)
+Easing: ease-out (enter), ease-in (exit), ease-in-out (standard)
+Page transitions: fade + slide up
+Button press: scale(0.98)
+Hover: lift 2px + stronger shadow
+
+## EMAIL SYSTEM
+
+### Email Service
+Start: SendGrid (100 emails/day free tier)
+Production: AWS SES ($0.10 per 1000 emails)
+
+### Email Types
+1. Verification email: Welcome message, verification link, 24h expiry
+2. Password reset email: Reset link, 1h expiry, security notice
+3. Welcome email: After verification, getting started guide
+4. Password changed: Confirmation, device/location info
+5. New device login: Alert with device details
+6. Account lockout: Notification after 5 failed attempts
+
+### Email Templates
+Use React Email or MJML for responsive templates
+Include: Plain text + HTML versions, unsubscribe link (future), company branding
+
+### Email Queue
+Use BullMQ with Redis for async email sending
+Don't block API responses waiting for email delivery
+Retry failed sends (3 attempts with exponential backoff)
+
+## SECURITY REQUIREMENTS
+
+### Password Security
+- bcrypt hashing with 10 rounds
+- Minimum 8 characters, 1 uppercase, 1 lowercase, 1 number
+- Check against common password list
+- Never log passwords
+- Password strength indicator in UI
+
+### Token Security
+- JWT signed with 256-bit secret (environment variable)
+- Access tokens: short-lived (15 min)
+- Refresh tokens: long-lived (30 days), httpOnly cookies
+- SameSite=Strict on cookies
+- Token blacklist in Redis for revoked tokens
+
+### Rate Limiting
+- Global: 100 req/15min per IP
+- Auth endpoints: stricter limits
+- Account lockout: 5 failed attempts = 30 min lock
+- Store counters in Redis with TTL
+
+### Input Validation
+- Frontend: React Hook Form + Zod schemas
+- Backend: class-validator decorators
+- Sanitize all inputs
+- Parameterized queries (Prisma prevents SQL injection)
+
+### Security Headers
+- Helmet.js for security headers
+- CORS: whitelist allowed origins
+- CSP: Content Security Policy
+- HSTS: Force HTTPS
+- X-Content-Type-Options: nosniff
+- X-Frame-Options: DENY
+
+### Audit Logging
+- Log all authentication events
+- Failed login attempts (email, IP, timestamp)
+- Successful logins (device, location)
+- Password changes
+- Session creation/termination
+- Suspicious activities
+
+## ERROR HANDLING
+
+### Backend
+- Global exception filter in NestJS
+- Consistent error response format:
+  {
+    success: false,
+    error: {
+      code: "ERROR_CODE",
+      message: "Human-readable message",
+      details: { field-specific errors }
+    }
+  }
+- HTTP status codes: 200, 201, 400, 401, 403, 404, 409, 422, 429, 500
+- Log errors to Sentry
+
+### Frontend
+- Axios interceptors for global error handling
+- Toast notifications for user feedback
+- Form validation errors inline
+- Retry logic for network failures
+- Graceful degradation
+- Error boundaries for React crashes
+
+## PERFORMANCE TARGETS
+
+- Login API response: < 500ms
+- Token refresh: < 100ms
+- Database queries: < 50ms
+- Session lookup (Redis): < 10ms
+- Page load (First Contentful Paint): < 1.5s
+- Page transitions: 250ms
+
+## ENVIRONMENT VARIABLES
+
+### Backend (.env)
+```
+NODE_ENV=development
+PORT=3000
+
+# Database (Supabase)
+DATABASE_URL=postgresql://postgres:[password]@db.xxxxx.supabase.co:5432/postgres
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# Redis (Upstash)
+REDIS_URL=rediss://default:[password]@xxxxx.upstash.io:6379
+
+# JWT
+JWT_SECRET=your-256-bit-secret-key-here
+JWT_ACCESS_EXPIRY=15m
+JWT_REFRESH_EXPIRY=30d
+
+# Email (SendGrid)
+SENDGRID_API_KEY=SG.xxxxx
+SENDGRID_FROM_EMAIL=noreply@expenseai.com
+SENDGRID_FROM_NAME=ExpenseAI Team
+
+# Google OAuth
+GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=xxxxx
+GOOGLE_CALLBACK_URL=http://localhost:3000/auth/google/callback
+
+# Frontend URL
+FRONTEND_URL=http://localhost:5173
+
+# Sentry
+SENTRY_DSN=https://xxxxx@sentry.io/xxxxx
+```
+
+### Frontend (.env)
+```
+VITE_API_URL=http://localhost:3000
+VITE_GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+```
+
+## FILE STRUCTURE
+
+### Backend (NestJS)
+```
+src/
+├── modules/
+│   └── auth/
+│       ├── auth.controller.ts
+│       ├── auth.service.ts
+│       ├── auth.module.ts
+│       ├── dto/
+│       ├── strategies/
+│       │   ├── jwt.strategy.ts
+│       │   └── google.strategy.ts
+│       └── guards/
+├── common/
+│   ├── decorators/
+│   ├── filters/
+│   ├── guards/
+│   ├── interceptors/
+│   └── pipes/
+├── prisma/
+│   ├── schema.prisma
+│   └── migrations/
+├── config/
+├── main.ts
+└── app.module.ts
+```
+
+### Frontend (React)
+```
+src/
+├── features/
+│   └── auth/
+│       ├── components/
+│       ├── hooks/
+│       ├── services/
+│       ├── types/
+│       └── utils/
+├── shared/
+│   ├── components/
+│   ├── hooks/
+│   ├── utils/
+│   └── types/
+├── lib/
+├── assets/
+├── styles/
+├── App.tsx
+└── main.tsx
+```
+
+## DEVELOPMENT WORKFLOW
+
+1. Setup Supabase project, get credentials
+2. Setup Upstash Redis, get URL
+3. Create SendGrid account, get API key
+4. Setup Google OAuth credentials
+5. Install dependencies (npm install)
+6. Create .env files with all credentials
+7. Run Prisma migrations (npx prisma migrate dev)
+8. Generate Prisma client (npx prisma generate)
+9. Start backend (npm run dev)
+10. Start frontend (npm run dev)
+11. Test authentication flows
+12. Deploy to Vercel (frontend) and Render (backend)
+
+## TESTING REQUIREMENTS
+
+- Unit tests for services (Jest)
+- Integration tests for API endpoints (Supertest)
+- E2E tests for critical flows (Playwright)
+- Test coverage: minimum 70%
+- Test authentication flows thoroughly
+- Mock external services (SendGrid, Google)
+
+## DEPLOYMENT
+
+### Frontend (Vercel)
+- Connect GitHub repository
+- Auto-deploy on push to main
+- Environment variables configured in Vercel dashboard
+- Custom domain setup
+
+### Backend (Render)
+- Connect GitHub repository
+- Auto-deploy on push to main
+- Environment variables configured in Render dashboard
+- Health check endpoint: /health
+
+## SUCCESS CRITERIA
+
+✅ Users can sign up with email/password
+✅ Users can sign up with Google OAuth
+✅ Users receive verification email within 5 seconds
+✅ Users can verify email via link
+✅ Users can login with email/password
+✅ Users can login with Google
+✅ Tokens refresh automatically before expiry
+✅ Users can request password reset
+✅ Users can set new password via email link
+✅ Users can view active sessions
+✅ Users can logout from specific devices
+✅ Rate limiting prevents brute force attacks
+✅ Account locks after 5 failed attempts
+✅ All security events logged
+✅ API responses < 500ms
+✅ Mobile responsive design
+✅ Accessible (WCAG AA)
+
+Build this authentication system first as a solid foundation. After authentication is working and tested, we'll add the expense tracking features (CRUD operations, categories, budgets, analytics, family sharing, etc.).
+
+Focus on clean code, type safety, security best practices, and excellent developer experience. Use TypeScript strictly, handle errors gracefully, validate all inputs, and write comprehensive tests.
+```
+
+---
+
+**Copy this entire prompt into Cursor IDE and it will understand your complete project architecture, requirements, and implementation details.** 🚀

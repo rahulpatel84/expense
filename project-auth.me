@@ -1,0 +1,1998 @@
+# 🔐 Custom Authentication System - Complete Build Overview
+
+## **PROJECT: ExpenseAI Authentication Module**
+
+---
+
+## 🎯 **WHAT WE'RE BUILDING**
+
+A **production-grade, secure authentication system** with the following capabilities:
+
+1. Users can create accounts with email and password
+2. Users can log in and stay logged in securely
+3. Users can reset forgotten passwords via email
+4. Users can verify their email addresses
+5. Users can log in with Google (OAuth)
+6. System prevents brute-force attacks
+7. System manages sessions across devices
+8. Tokens refresh automatically before expiry
+9. All sensitive data is encrypted
+10. All actions are logged for security
+
+---
+
+## 📋 **COMPLETE FEATURE LIST**
+
+### **1. USER REGISTRATION (SIGNUP)**
+
+**What users can do:**
+- Enter full name, email, password
+- Choose their preferred currency (USD, EUR, GBP, etc.)
+- Accept terms and conditions
+- Sign up with Google (alternative)
+
+**What happens behind the scenes:**
+- System checks if email already exists
+- Password is validated (minimum 8 characters, uppercase, lowercase, number)
+- Password is hashed using bcrypt (never stored plain)
+- User account is created in database
+- Verification email is sent (doesn't block signup)
+- JWT tokens are generated (access + refresh)
+- User is logged in immediately
+- Session is created and stored in Redis
+- Welcome screen is shown
+
+**Data collected:**
+- Full name
+- Email address (unique)
+- Password (hashed)
+- Currency preference
+- Terms acceptance timestamp
+- IP address (for security)
+- Device information
+- Signup date/time
+
+**Validation rules:**
+- Full name: 2-255 characters, letters only
+- Email: Valid format, not disposable domain, unique
+- Password: Min 8 chars, 1 uppercase, 1 lowercase, 1 number
+- Currency: Must be valid ISO code (USD, EUR, GBP, etc.)
+- Terms: Must be accepted (checkbox required)
+
+**Error handling:**
+- Email already registered → Show error, offer login
+- Weak password → Show specific requirements not met
+- Invalid email format → Show error inline
+- Network failure → Retry logic, show friendly message
+- Server error → Generic error, log details for debugging
+
+**Security measures:**
+- Rate limit: 5 signups per IP per 15 minutes
+- CAPTCHA after 3 failed attempts (optional for V1)
+- Email verification required before full access
+- Password strength meter shown to user
+- No password hints or autocomplete
+
+---
+
+### **2. USER LOGIN**
+
+**What users can do:**
+- Enter email and password
+- Click "Remember me" (extends session to 30 days)
+- Use "Forgot password" link if needed
+- Login with Google (alternative)
+
+**What happens behind the scenes:**
+- System finds user by email
+- Password is compared with hashed version in database
+- If match: Generate new JWT tokens
+- If mismatch: Increment failed attempt counter
+- After 5 failed attempts: Lock account for 30 minutes
+- Session is created in Redis with device info
+- Update last_login_at timestamp
+- Log the login event (IP, device, time)
+- Return user data and tokens to frontend
+
+**Success response includes:**
+- Access token (JWT, expires in 15 minutes)
+- Refresh token (UUID, expires in 30 days)
+- User profile data (name, email, avatar, settings)
+- Redirect URL (dashboard or onboarding)
+
+**Failed login scenarios:**
+- Wrong email: "Invalid email or password" (don't specify which)
+- Wrong password: "Invalid email or password" (don't specify which)
+- Account locked: "Too many failed attempts. Try again in X minutes"
+- Email not verified: "Please verify your email first" + resend option
+- Account disabled: "Account suspended. Contact support"
+
+**Security measures:**
+- Rate limit: 10 login attempts per IP per 15 minutes
+- Account lockout: 5 failed attempts → 30 minute lock
+- Log all attempts (successful and failed)
+- Send email on failed attempts (after 3 failures)
+- Send email on new device login
+- Block disposable email domains
+
+---
+
+### **3. JWT TOKEN SYSTEM**
+
+**Two-token approach:**
+
+**ACCESS TOKEN:**
+- Type: JWT (JSON Web Token)
+- Lifespan: 15 minutes
+- Storage: React state (memory only)
+- Purpose: API authentication
+- Contains: user_id, email, role, issued_at, expires_at
+- Sent in: Authorization header as Bearer token
+- If stolen: Limited damage (expires quickly)
+
+**REFRESH TOKEN:**
+- Type: Random UUID (cryptographically secure)
+- Lifespan: 30 days (or 7 days if "remember me" not checked)
+- Storage: httpOnly cookie (JavaScript cannot access)
+- Purpose: Get new access tokens
+- Contains: Just the UUID (reference to database record)
+- Sent in: Cookie (automatic by browser)
+- If stolen: Can be revoked from database
+- Rotation: New token issued on each use (optional for extra security)
+
+**Token workflow:**
+
+**Initial login:**
+```
+User logs in
+→ Backend generates both tokens
+→ Access token sent in response body
+→ Refresh token set as httpOnly cookie
+→ Frontend stores access token in memory
+→ Frontend stores user data in state
+```
+
+**Making API requests:**
+```
+Frontend sends request
+→ Includes Authorization: Bearer {access_token}
+→ Backend validates token signature
+→ Backend checks expiration
+→ If valid: Process request
+→ If invalid/expired: Return 401
+→ Frontend catches 401 → triggers refresh
+```
+
+**Token refresh flow:**
+```
+Access token about to expire (13-14 minutes)
+→ Frontend calls /auth/refresh endpoint
+→ Refresh token sent automatically (cookie)
+→ Backend validates refresh token in database
+→ Backend checks not expired, not revoked
+→ Backend generates NEW access token
+→ Backend optionally rotates refresh token
+→ Frontend receives new access token
+→ Frontend updates token in memory
+→ Original request is retried automatically
+```
+
+**Token security:**
+- Access tokens signed with 256-bit secret key
+- Secret key stored in environment variable (never in code)
+- Different secrets for dev/staging/production
+- Tokens include issued_at and expires_at
+- Backend maintains blacklist for revoked tokens (Redis)
+- Blacklist entries expire after token lifetime (15 min)
+- All token operations logged
+
+---
+
+### **4. PASSWORD SECURITY**
+
+**Hashing algorithm:**
+- Use: bcrypt
+- Rounds: 10 (balances security vs performance)
+- Salt: Automatically generated per password (random)
+- Result: 60-character hash string
+
+**How it works:**
+```
+User creates password: "MySecurePass123"
+→ bcrypt.hash("MySecurePass123", 10)
+→ Generates salt: "$2b$10$abcd1234..."
+→ Combines password + salt
+→ Hashes multiple times (2^10 = 1024 iterations)
+→ Stores: "$2b$10$abcd1234...xyz789" (60 chars)
+
+User logs in with: "MySecurePass123"
+→ bcrypt.compare("MySecurePass123", stored_hash)
+→ Extracts salt from stored hash
+→ Hashes input with same salt
+→ Compares results
+→ Returns: true (match) or false (no match)
+```
+
+**Password requirements:**
+- Minimum 8 characters
+- At least 1 uppercase letter
+- At least 1 lowercase letter
+- At least 1 number
+- Optional for V1: 1 special character
+- Not in common password list (check against known breached passwords)
+- Not same as email address
+- Not same as name
+
+**Password strength indicator:**
+- Weak: Red (less than 8 chars or basic patterns)
+- Medium: Yellow (meets minimum but predictable)
+- Strong: Green (long, mixed characters, unpredictable)
+- Shown in real-time as user types
+
+**Storage:**
+- Never log passwords (even hashed)
+- Never send passwords in emails
+- Never display passwords in UI (except when user toggles visibility)
+- Delete password reset tokens after use
+- Hash passwords only on backend (never frontend)
+
+---
+
+### **5. EMAIL VERIFICATION**
+
+**Purpose:**
+- Confirm user owns the email address
+- Reduce spam/fake accounts
+- Enable password recovery
+- Comply with regulations (GDPR)
+
+**Signup flow:**
+```
+1. User signs up
+2. Account created (but email_verified = false)
+3. Verification email sent immediately
+4. User can browse app but sees banner: "Please verify email"
+5. Some features locked until verified (e.g., family sharing)
+```
+
+**Email content:**
+- Subject: "Verify your email address"
+- Sender: "ExpenseAI Team <noreply@expenseai.com>"
+- Content:
+  - Welcome message
+  - Verification button (large, prominent)
+  - Alternative: Copy-paste link
+  - Link format: https://app.expenseai.com/verify-email?token={TOKEN}
+  - Token expiry: 24 hours
+  - What to do if didn't sign up
+  - Support contact info
+
+**Token generation:**
+- Type: Random secure string (crypto.randomBytes(32).toString('hex'))
+- Length: 64 characters
+- Stored in database with:
+  - user_id (who it's for)
+  - token (the actual string)
+  - expires_at (24 hours from now)
+  - created_at (timestamp)
+  - used_at (null until used)
+
+**Verification process:**
+```
+1. User clicks link in email
+2. Frontend extracts token from URL
+3. Frontend calls: GET /auth/verify-email?token={TOKEN}
+4. Backend validates:
+   - Token exists in database
+   - Not expired (< 24 hours old)
+   - Not already used (used_at is null)
+   - Associated user exists
+5. If valid:
+   - Update user.email_verified = true
+   - Mark token as used (set used_at = now)
+   - Log verification event
+   - Return success
+6. Frontend shows success message
+7. Remove verification banner
+8. Unlock restricted features
+```
+
+**Edge cases:**
+- Expired token: Show "expired" message + resend button
+- Already verified: Show "already verified" message
+- Invalid token: Show "invalid link" message
+- User not found: Show generic error (don't reveal)
+
+**Resend functionality:**
+- User can request new verification email
+- Invalidate old token (mark as expired)
+- Generate new token
+- Send new email
+- Rate limit: 3 resends per hour per user
+
+---
+
+### **6. PASSWORD RESET FLOW**
+
+**Complete user journey:**
+
+**Step 1: Request reset**
+```
+User clicks "Forgot Password" on login page
+→ Enters email address
+→ Submits form
+→ System ALWAYS shows success (even if email doesn't exist)
+→ Message: "If account exists, you'll receive a reset link"
+```
+
+**Why always show success?**
+- Security: Don't reveal if email is registered
+- Privacy: Protects user information
+- Anti-enumeration: Attackers can't discover valid emails
+
+**Step 2: Send reset email**
+```
+Backend receives email
+→ Check if user exists (internal only)
+→ If exists:
+   - Generate secure reset token (crypto.randomBytes)
+   - Store in password_resets table:
+     * user_id
+     * token (hashed version)
+     * expires_at (1 hour from now)
+     * created_at
+     * ip_address (for security)
+   - Queue email for sending (don't wait)
+→ If doesn't exist:
+   - Do nothing (silently ignore)
+→ Return success message either way
+```
+
+**Reset email content:**
+- Subject: "Reset your ExpenseAI password"
+- Sender: "ExpenseAI Team <noreply@expenseai.com>"
+- Content:
+  - Reset button (large, prominent)
+  - Alternative: Copy-paste link
+  - Link: https://app.expenseai.com/reset-password?token={TOKEN}
+  - Expiry warning: "Link expires in 1 hour"
+  - If you didn't request this, ignore email
+  - Support contact
+
+**Step 3: User clicks link**
+```
+User clicks link in email
+→ Opens reset password page
+→ Frontend extracts token from URL
+→ Frontend validates token: GET /auth/validate-reset-token?token={TOKEN}
+→ Backend checks:
+   - Token exists
+   - Not expired (< 1 hour)
+   - Not already used
+→ If valid: Show new password form
+→ If invalid: Show error + request new link
+```
+
+**Step 4: Set new password**
+```
+User enters new password (twice)
+→ Frontend validates:
+   - Both fields match
+   - Meets password requirements
+   - Password strength indicator
+→ Submits: POST /auth/reset-password
+   Body: { token, new_password }
+→ Backend validates:
+   - Token still valid
+   - Password meets requirements
+   - Not same as old password (optional)
+→ If valid:
+   - Hash new password (bcrypt)
+   - Update user.password
+   - Mark token as used
+   - Invalidate ALL user sessions (security)
+   - Log password change event
+   - Send confirmation email
+   - Return success
+→ Frontend redirects to login with success message
+```
+
+**Step 5: Confirmation email**
+```
+Subject: "Your password was changed"
+Content:
+- Confirmation that password changed
+- Date/time
+- Device/location (if available)
+- "Wasn't you?" → Contact support immediately
+- How to secure account
+```
+
+**Security measures:**
+- Token expires in 1 hour (short window)
+- Token can only be used once
+- Invalidate all sessions on password change
+- Log all password reset attempts
+- Rate limit: 3 reset requests per email per hour
+- Email sent even if account doesn't exist (for privacy)
+- Don't reveal if email exists
+
+---
+
+### **7. REFRESH TOKEN ROTATION**
+
+**What is token rotation?**
+When user gets a new access token, they also get a new refresh token (old one is invalidated).
+
+**Why rotate?**
+- Extra security: If token stolen, it's invalidated on next use
+- Limit exposure: Each token has single use
+- Detect theft: If old token used, suspicious activity alert
+
+**How it works:**
+
+**Without rotation (simpler, less secure):**
+```
+User logs in → Gets refresh_token_1 (valid 30 days)
+Day 1: Use refresh_token_1 → Get new access token
+Day 2: Use refresh_token_1 → Get new access token
+Day 30: Use refresh_token_1 → Get new access token
+(Same refresh token whole time)
+```
+
+**With rotation (more secure):**
+```
+User logs in → Gets refresh_token_1
+Day 1: Use refresh_token_1 → Get access_token + refresh_token_2
+       → refresh_token_1 invalidated
+Day 2: Use refresh_token_2 → Get access_token + refresh_token_3
+       → refresh_token_2 invalidated
+Day 3: Use refresh_token_3 → Get access_token + refresh_token_4
+       → refresh_token_3 invalidated
+(New refresh token each time)
+```
+
+**Rotation logic:**
+```
+1. User sends refresh_token_1
+2. Backend validates it's valid and not used
+3. Backend generates NEW access token
+4. Backend generates NEW refresh_token_2
+5. Backend marks refresh_token_1 as revoked
+6. Backend stores refresh_token_2 in database
+7. Backend returns both new tokens
+8. Frontend updates tokens in memory/cookie
+```
+
+**Theft detection:**
+```
+Scenario: Attacker steals refresh_token_3
+
+Timeline:
+10:00 AM - Legitimate user uses refresh_token_3
+           → Gets refresh_token_4
+           → refresh_token_3 invalidated
+
+10:05 AM - Attacker tries to use refresh_token_3
+           → Backend sees it's already used
+           → Backend sees it was recently used
+           → ALERT: Potential token theft
+           → Invalidate ALL tokens for this user
+           → Force re-login
+           → Send security alert email
+           → Log suspicious activity
+```
+
+**Implementation details:**
+- Store in database: token, user_id, created_at, revoked_at, device_info
+- On each refresh: Create new record, mark old as revoked
+- Cleanup: Delete revoked tokens after 30 days
+- Grace period: Allow old token for 30 seconds (clock skew)
+
+**For V1:**
+- Can start without rotation (simpler)
+- Add rotation in V1.1 (enhancement)
+- Document as known limitation
+
+---
+
+### **8. SESSION MANAGEMENT**
+
+**What is a session?**
+A record of a user's login from a specific device. Allows tracking and managing where user is logged in.
+
+**Session data stored (Redis):**
+```
+Key: session:{user_id}:{session_id}
+Value: {
+  user_id: "uuid-123",
+  refresh_token: "token-abc",
+  device_name: "Chrome on MacBook Pro",
+  device_type: "desktop",
+  os: "macOS 14.0",
+  browser: "Chrome 120",
+  ip_address: "192.168.1.1",
+  location: "San Francisco, CA" (from IP),
+  is_active: true,
+  created_at: "2024-12-28T10:00:00Z",
+  last_accessed_at: "2024-12-28T14:30:00Z",
+  expires_at: "2025-01-27T10:00:00Z" (30 days)
+}
+```
+
+**Session lifecycle:**
+
+**Creation (login):**
+```
+User logs in
+→ Extract device info from User-Agent header
+→ Get IP address from request
+→ Optionally get location from IP (GeoIP service)
+→ Generate session_id (UUID)
+→ Store session in Redis
+→ Set expiry (30 days)
+→ Return tokens to user
+```
+
+**Access (API requests):**
+```
+User makes API request with access token
+→ Extract session_id from token
+→ Update last_accessed_at in Redis
+→ Reset expiry timer (sliding window)
+```
+
+**Validation:**
+```
+On token refresh:
+→ Check session exists in Redis
+→ Check session is_active = true
+→ Check not expired
+→ If valid: Allow refresh
+→ If invalid: Force re-login
+```
+
+**Termination (logout):**
+```
+User clicks logout
+→ Mark session as inactive (is_active = false)
+→ Add refresh_token to blacklist
+→ Don't delete immediately (keep for audit)
+→ After 30 days: Auto-delete from Redis
+```
+
+**Features users can use:**
+
+**View active sessions:**
+```
+API: GET /users/me/sessions
+Returns: List of all active sessions
+Display:
+- Device name (Chrome on MacBook)
+- Location (San Francisco, CA)
+- Last active (2 hours ago)
+- "Current session" badge
+- "Sign out" button for each
+```
+
+**Sign out specific session:**
+```
+User clicks "Sign out" on another device
+→ POST /users/me/sessions/{session_id}/logout
+→ Invalidate that session
+→ Revoke its refresh token
+→ User on that device gets logged out on next request
+```
+
+**Sign out all devices:**
+```
+User clicks "Sign out all other devices"
+→ DELETE /users/me/sessions
+→ Keep only current session active
+→ Invalidate all other sessions
+→ Useful if device lost or account compromised
+```
+
+**Automatic cleanup:**
+- Sessions expire after 30 days of inactivity
+- Redis automatically deletes expired keys
+- Inactive sessions (is_active = false) deleted after 7 days
+- Keep audit logs separately (don't delete)
+
+**Security benefits:**
+- See where you're logged in
+- Spot suspicious logins (unknown devices/locations)
+- Remote logout if device stolen
+- Limit concurrent sessions (optional: max 5 devices)
+- Track user activity patterns
+
+---
+
+### **9. GOOGLE OAUTH INTEGRATION**
+
+**What users see:**
+```
+Login/Signup page has button:
+┌─────────────────────────────┐
+│  [G]  Continue with Google  │
+└─────────────────────────────┘
+```
+
+**Complete OAuth flow:**
+
+**Step 1: User initiates**
+```
+User clicks "Continue with Google"
+→ Frontend calls: GET /auth/google
+→ Backend generates OAuth state (CSRF protection)
+→ Backend stores state in session/cookie (temp, 5 min)
+→ Backend redirects user to Google:
+
+https://accounts.google.com/o/oauth2/v2/auth?
+  client_id=YOUR_CLIENT_ID
+  &redirect_uri=https://app.expenseai.com/auth/google/callback
+  &response_type=code
+  &scope=email+profile
+  &state=random-csrf-token-xyz
+
+User leaves your app, goes to Google
+```
+
+**Step 2: Google consent**
+```
+Google shows permission screen:
+"ExpenseAI wants to:
+ - View your email address
+ - View your basic profile info"
+
+User clicks "Allow"
+```
+
+**Step 3: Google redirects back**
+```
+Google redirects to your callback URL:
+https://app.expenseai.com/auth/google/callback?
+  code=AUTHORIZATION_CODE_FROM_GOOGLE
+  &state=random-csrf-token-xyz
+
+Frontend receives this
+```
+
+**Step 4: Exchange code for tokens**
+```
+Frontend calls your backend:
+POST /auth/google/callback
+Body: { code: "AUTHORIZATION_CODE", state: "xyz" }
+
+Backend:
+1. Validates state matches (CSRF check)
+2. Exchanges code with Google for access token:
+   POST https://oauth2.googleapis.com/token
+   Body: {
+     code: "AUTHORIZATION_CODE",
+     client_id: "YOUR_CLIENT_ID",
+     client_secret: "YOUR_CLIENT_SECRET",
+     redirect_uri: "YOUR_CALLBACK_URL",
+     grant_type: "authorization_code"
+   }
+3. Google returns access_token
+4. Backend uses token to get user info:
+   GET https://www.googleapis.com/oauth2/v2/userinfo
+   Headers: Authorization: Bearer {access_token}
+5. Google returns:
+   {
+     id: "google-user-id-123",
+     email: "user@gmail.com",
+     name: "John Doe",
+     picture: "https://lh3.googleusercontent.com/..."
+   }
+```
+
+**Step 5: Create or login user**
+```
+Backend checks:
+→ Does user with this email exist?
+
+If YES (existing user):
+- Update last_login_at
+- Update oauth provider info (if changed)
+- Update profile picture (if newer)
+- Generate JWT tokens
+- Create session
+- Return user + tokens
+
+If NO (new user):
+- Create user account:
+  * full_name from Google
+  * email from Google (already verified)
+  * avatar_url from Google picture
+  * email_verified = true (Google verified it)
+  * no password (OAuth only)
+- Create oauth_providers record:
+  * provider: "google"
+  * provider_user_id: Google's ID
+  * provider_email: email from Google
+  * profile_data: JSON of all Google data
+- Generate JWT tokens
+- Create session
+- Return user + tokens + new_user flag
+```
+
+**Step 6: Frontend finalizes**
+```
+Frontend receives response:
+{
+  user: {...},
+  tokens: {...},
+  new_user: true
+}
+
+If new_user:
+→ Redirect to onboarding
+Else:
+→ Redirect to dashboard
+```
+
+**OAuth database schema:**
+```
+oauth_providers table:
+- id (primary key)
+- user_id (foreign key to users)
+- provider (google, facebook, apple)
+- provider_user_id (Google's ID for this user)
+- provider_email (email from provider)
+- access_token (from provider, optional)
+- refresh_token (from provider, optional)
+- token_expires_at
+- profile_data (JSON - all data from provider)
+- connected_at (first time connected)
+- last_synced_at (last time updated)
+```
+
+**Edge cases:**
+
+**Email already exists (via password signup):**
+```
+User previously signed up with password using john@gmail.com
+Now tries to login with Google using same email
+
+Options:
+A) Auto-link accounts (recommended):
+   - Connect Google to existing account
+   - User now has 2 login methods
+   - Add oauth_providers record
+
+B) Require manual linking:
+   - Show: "Email already registered"
+   - Ask user to login with password first
+   - Then link Google in settings
+```
+
+**User changes Google email:**
+```
+User's email changes in Google
+Next login: Detect email mismatch
+Options:
+- Update email in your database
+- Or: Treat as new account
+- Document your decision
+```
+
+**User revokes access:**
+```
+User goes to Google → removes ExpenseAI permission
+Next login: OAuth fails
+Handle gracefully:
+- Show error message
+- Offer to reconnect
+- Or login with password
+```
+
+**Google credentials needed:**
+```
+From Google Cloud Console:
+1. Create project
+2. Enable Google+ API
+3. Configure OAuth consent screen
+4. Create OAuth 2.0 credentials
+5. Get:
+   - Client ID
+   - Client Secret
+   - Authorized redirect URIs
+6. Store in environment variables
+```
+
+**Security considerations:**
+- State parameter prevents CSRF
+- Client secret never exposed to frontend
+- Token exchange happens on backend only
+- Store provider tokens securely (encrypted)
+- Allow users to disconnect OAuth
+- Respect Google's branding guidelines
+
+---
+
+### **10. RATE LIMITING & SECURITY**
+
+**Rate limiting strategy:**
+
+**Purpose:**
+- Prevent brute-force attacks
+- Prevent DoS (Denial of Service)
+- Prevent abuse
+- Protect server resources
+- Fair usage for all users
+
+**Implementation levels:**
+
+**Level 1: Global (per IP address):**
+```
+Limit: 100 requests per 15 minutes per IP
+Applies to: All endpoints
+Purpose: Prevent general abuse
+Storage: Redis (fast lookup)
+
+Example:
+IP 192.168.1.1 makes 101st request in 15 min
+→ Blocked with 429 Too Many Requests
+→ Response: {
+    error: "Rate limit exceeded",
+    retry_after: 300 (seconds)
+  }
+```
+
+**Level 2: Auth endpoints (stricter):**
+```
+Signup:
+- 5 attempts per IP per 15 minutes
+- Prevents mass account creation
+
+Login:
+- 10 attempts per IP per 15 minutes
+- 5 failed attempts per email → lock account 30 min
+- Prevents brute-force password guessing
+
+Forgot Password:
+- 3 requests per email per hour
+- Prevents email bombing
+
+Email Verification Resend:
+- 3 requests per user per hour
+- Prevents spam
+```
+
+**Level 3: Account lockout:**
+```
+After 5 failed login attempts for same email:
+→ Lock account for 30 minutes
+→ Store lockout in database:
+  * locked_until timestamp
+  * failed_attempts count
+  * last_failed_at timestamp
+→ Send email notification to user
+→ Email content:
+  "Your account was temporarily locked due to
+   multiple failed login attempts. You can try
+   again in 30 minutes, or reset your password."
+```
+
+**Rate limit storage (Redis):**
+```
+Key structure:
+rate_limit:{type}:{identifier}
+
+Examples:
+rate_limit:global:192.168.1.1 → "45" (request count)
+rate_limit:login:john@email.com → "3" (attempt count)
+rate_limit:signup:192.168.1.1 → "2" (signup count)
+
+TTL (time to live):
+→ Automatically expire after limit window
+→ E.g., 15 minutes for global limit
+```
+
+**Response when rate limited:**
+```
+HTTP 429 Too Many Requests
+
+Headers:
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1703777400 (Unix timestamp)
+Retry-After: 300 (seconds)
+
+Body:
+{
+  success: false,
+  error: {
+    code: "RATE_LIMIT_EXCEEDED",
+    message: "Too many requests. Please try again later.",
+    retry_after: 300
+  }
+}
+
+Frontend shows:
+"Too many attempts. Please wait 5 minutes and try again."
+```
+
+**Additional security measures:**
+
+**Input validation:**
+- Email: Regex validation, lowercase, trimmed
+- Password: Length, character requirements
+- Names: No special characters, SQL injection attempts
+- All inputs sanitized before database
+
+**SQL Injection prevention:**
+- Use ORM (Prisma) - parameterized queries
+- Never concatenate user input into queries
+- Prepared statements only
+
+**XSS Prevention:**
+- Sanitize all user inputs
+- Escape HTML in outputs
+- Content-Security-Policy headers
+- Don't use dangerouslySetInnerHTML
+
+**CSRF Protection:**
+- SameSite=Strict on cookies
+- CSRF tokens on forms (if using cookie auth)
+- Verify Origin/Referer headers
+
+**Security headers:**
+```
+HTTP response headers:
+Strict-Transport-Security: max-age=31536000
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-XSS-Protection: 1; mode=block
+Content-Security-Policy: default-src 'self'
+Referrer-Policy: strict-origin-when-cross-origin
+```
+
+**Audit logging:**
+```
+Log all security events:
+- Failed login attempts (email, IP, timestamp)
+- Successful logins (email, IP, device, timestamp)
+- Password changes
+- Password reset requests
+- Email verifications
+- Account lockouts
+- Rate limit hits
+- Suspicious activities
+
+Store in separate audit_logs table:
+- user_id (nullable)
+- action (login_failed, password_reset, etc.)
+- ip_address
+- user_agent
+- metadata (JSON with details)
+- created_at
+
+Retention: 90 days minimum (compliance)
+```
+
+**IP blocking (optional for V1):**
+```
+Detect patterns:
+- 100+ failed login attempts → Block IP 24 hours
+- Mass signups → Block IP permanently
+- Suspicious patterns → Manual review
+
+Blocklist stored in Redis:
+blocked_ip:192.168.1.1 → "reason: brute_force"
+TTL: 24 hours or permanent
+
+Whitelist for known IPs:
+whitelist_ip:company_office_ip
+```
+
+**Device fingerprinting (future enhancement):**
+```
+Generate unique ID from:
+- User agent
+- Screen resolution
+- Timezone
+- Language
+- Installed fonts
+- Canvas fingerprint
+
+Use to detect:
+- Multiple accounts from same device
+- Suspicious device changes
+- Account takeover attempts
+```
+
+---
+
+## 🔄 **COMPLETE USER FLOWS**
+
+### **Flow 1: New User Complete Journey**
+
+```
+1. User lands on site
+   ↓
+2. Clicks "Sign Up"
+   ↓
+3. Fills form (name, email, password, currency)
+   ↓
+4. Clicks "Create Account"
+   ↓
+5. Frontend validates inputs
+   ↓
+6. POST /auth/signup
+   ↓
+7. Backend:
+   - Validates data
+   - Checks email not exists
+   - Hashes password
+   - Creates user record
+   - Generates verification token
+   - Queues verification email (async)
+   - Generates JWT tokens
+   - Creates session in Redis
+   - Returns tokens + user data
+   ↓
+8. Frontend:
+   - Stores access token in state
+   - Refresh token set as httpOnly cookie
+   - Stores user data in state
+   - Redirects to onboarding
+   ↓
+9. User sees onboarding
+   ↓
+10. Banner: "Please verify your email"
+    ↓
+11. Meanwhile, email sent with verification link
+    ↓
+12. User checks email
+    ↓
+13. Clicks verification link
+    ↓
+14. Opens app: GET /verify-email?token=xyz
+    ↓
+15. Backend validates token, updates email_verified=true
+    ↓
+16. Success page shown
+    ↓
+17. Banner disappears
+    ↓
+18. User continues to dashboard
+```
+
+### **Flow 2: Returning User Login**
+
+```
+1. User goes to app.expenseai.com
+   ↓
+2. Clicks "Login"
+   ↓
+3. Enters email and password
+   ↓
+4. Clicks "Sign In"
+   ↓
+5. POST /auth/login
+   ↓
+6. Backend:
+   - Finds user by email
+   - Compares password hash
+   - Validates account (not locked, email verified)
+   - Generates new tokens
+   - Creates new session
+   - Updates last_login_at
+   - Logs event
+   - Returns tokens + user
+   ↓
+7. Frontend:
+   - Stores tokens
+   - Redirects to dashboard
+   ↓
+8. User sees dashboard with data
+```
+
+### **Flow 3: Password Reset**
+
+```
+1. User on login page, forgot password
+   ↓
+2. Clicks "Forgot Password?"
+   ↓
+3. Enters email address
+   ↓
+4. POST /auth/forgot-password
+   ↓
+5. Backend:
+   - Checks if user exists (silently)
+   - Generates reset token
+   - Stores in password_resets table
+   - Queues reset email
+   - Returns success (always)
+   ↓
+6. User sees: "Check your email"
+   ↓
+7. User receives email with reset link
+   ↓
+8. Clicks link
+   ↓
+9. Opens: /reset-password?token=abc
+   ↓
+10. GET /auth/validate-reset-token?token=abc
+    ↓
+11. Backend validates token (exists, not expired)
+    ↓
+12. If valid: Show new password form
+    ↓
+13. User enters new password (twice)
+    ↓
+14. Frontend validates passwords match
+    ↓
+15. POST /auth/reset-password
+    ↓
+16. Backend:
+    - Validates token again
+    - Hashes new password
+    - Updates user.password
+    - Marks token as used
+    - Invalidates all sessions
+    - Sends confirmation email
+    - Returns success
+    ↓
+17. User redirected to login
+    ↓
+18. Success message: "Password reset! Please login"
+    ↓
+19. User logs in with new password
+```
+
+### **Flow 4: Token Refresh (Background)**
+
+```
+Happens automatically while user browses app:
+
+1. User makes API request
+   ↓
+2. Axios interceptor checks token expiry
+   ↓
+3. If expires in < 2 minutes:
+   ↓
+4. POST /auth/refresh (automatic, refresh token in cookie)
+   ↓
+5. Backend:
+   - Validates refresh token in Redis
+   - Checks not expired, not revoked
+   - Generates new access token
+   - Optionally rotates refresh token
+   - Returns new access token
+   ↓
+6. Frontend updates token in state
+   ↓
+7. Original request retried with new token
+   ↓
+8. User never notices (seamless)
+```
+
+### **Flow 5: Google OAuth**
+
+```
+1. User on login page
+   ↓
+2. Clicks "Continue with Google"
+   ↓
+3. GET /auth/google
+   ↓
+4. Redirected to Google consent screen
+   ↓
+5. User clicks "Allow"
+   ↓
+6. Google redirects back with code
+   ↓
+7. POST /auth/google/callback with code
+   ↓
+8. Backend:
+   - Exchanges code for access token
+   - Gets user info from Google
+   - Checks if user exists (by email)
+   - If new: Creates account
+   - If existing: Updates info
+   - Links OAuth provider
+   - Generates JWT tokens
+   - Creates session
+   - Returns tokens + user
+   ↓
+9. Frontend:
+   - Stores tokens
+   - If new user: Redirect to onboarding
+   - If existing: Redirect to dashboard
+```
+
+---
+
+## 📊 **DATABASE TABLES NEEDED**
+
+### **users**
+```
+Columns:
+- id (UUID, primary key)
+- full_name (VARCHAR 255)
+- email (VARCHAR 255, unique, indexed)
+- password_hash (VARCHAR 60, nullable for OAuth users)
+- avatar_url (TEXT, nullable)
+- currency_code (VARCHAR 3, default 'USD')
+- email_verified (BOOLEAN, default false)
+- onboarding_completed (BOOLEAN, default false)
+- locked_until (TIMESTAMP, nullable)
+- failed_login_attempts (INTEGER, default 0)
+- last_failed_login_at (TIMESTAMP, nullable)
+- last_login_at (TIMESTAMP, nullable)
+- created_at (TIMESTAMP, default now)
+- updated_at (TIMESTAMP, auto-update)
+```
+
+### **user_sessions** (Redis structure)
+```
+Key: session:{user_id}:{session_id}
+Value (JSON):
+{
+  user_id,
+  refresh_token,
+  device_name,
+  device_type,
+  os,
+  browser,
+  ip_address,
+  location,
+  is_active,
+  created_at,
+  last_accessed_at,
+  expires_at
+}
+TTL: 30 days
+```
+
+### **oauth_providers**
+```
+Columns:
+- id (UUID, primary key)
+- user_id (UUID, foreign key)
+- provider (VARCHAR 50: 'google', 'facebook', etc.)
+- provider_user_id (VARCHAR 255)
+- provider_email (VARCHAR 255)
+- access_token (TEXT, nullable)
+- refresh_token (TEXT, nullable)
+- token_expires_at (TIMESTAMP, nullable)
+- profile_data (JSONB)
+- connected_at (TIMESTAMP)
+- last_synced_at (TIMESTAMP)
+
+Indexes:
+- user_id
+- provider + provider_user_id (unique)
+```
+
+### **password_resets**
+```
+Columns:
+- id (UUID, primary key)
+- user_id (UUID, foreign key)
+- token_hash (VARCHAR 64, indexed)
+- expires_at (TIMESTAMP, indexed)
+- used_at (TIMESTAMP, nullable)
+- ip_address (INET)
+- created_at (TIMESTAMP)
+
+Indexes:
+- token_hash
+- expires_at
+```
+
+### **email_verifications**
+```
+Columns:
+- id (UUID, primary key)
+- user_id (UUID, foreign key)
+- email (VARCHAR 255)
+- token_hash (VARCHAR 64, indexed)
+- expires_at (TIMESTAMP)
+- verified_at (TIMESTAMP, nullable)
+- ip_address (INET)
+- created_at (TIMESTAMP)
+
+Indexes:
+- token_hash
+- user_id
+```
+
+### **audit_logs**
+```
+Columns:
+- id (UUID, primary key)
+- user_id (UUID, nullable, indexed)
+- action (VARCHAR 100, indexed)
+- resource_type (VARCHAR 50, nullable)
+- resource_id (UUID, nullable)
+- ip_address (INET)
+- user_agent (TEXT)
+- metadata (JSONB)
+- created_at (TIMESTAMP, indexed)
+
+Indexes:
+- user_id
+- action
+- created_at
+```
+
+---
+
+## 🎯 **SUCCESS CRITERIA**
+
+### **Functional Requirements:**
+```
+✅ Users can sign up with email/password
+✅ Users can sign up with Google
+✅ Users receive verification email
+✅ Users can verify email via link
+✅ Users can login with email/password
+✅ Users can login with Google
+✅ Users stay logged in (tokens work)
+✅ Tokens refresh automatically
+✅ Users can request password reset
+✅ Users receive reset email
+✅ Users can set new password
+✅ Users can view active sessions
+✅ Users can logout from specific devices
+✅ Users can logout from all devices
+```
+
+### **Security Requirements:**
+```
+✅ Passwords hashed with bcrypt
+✅ JWT tokens properly signed
+✅ Refresh tokens in httpOnly cookies
+✅ Rate limiting on all auth endpoints
+✅ Account lockout after 5 failed attempts
+✅ HTTPS enforced
+✅ Security headers set
+✅ CSRF protection
+✅ XSS prevention
+✅ SQL injection prevention
+✅ All security events logged
+```
+
+### **Performance Requirements:**
+```
+✅ Login response < 500ms
+✅ Token refresh < 100ms
+✅ Email sent within 5 seconds (queued)
+✅ Password hashing < 200ms
+✅ Session lookup < 10ms (Redis)
+✅ Database queries < 50ms
+```
+
+### **UX Requirements:**
+```
+✅ Clear error messages
+✅ Loading states shown
+✅ Success feedback
+✅ Password strength indicator
+✅ Email verification reminder
+✅ Smooth animations
+✅ Mobile responsive
+✅ Accessible (WCAG AA)
+```
+
+---
+
+## 📦 **DELIVERABLES**
+
+### **Backend API:**
+- POST /auth/signup
+- POST /auth/login
+- POST /auth/logout
+- POST /auth/refresh
+- POST /auth/forgot-password
+- POST /auth/reset-password
+- GET /auth/verify-email
+- POST /auth/resend-verification
+- GET /auth/google
+- GET /auth/google/callback
+- POST /auth/google/disconnect
+- GET /users/me
+- PATCH /users/me
+- POST /users/me/change-password
+- GET /users/me/sessions
+- DELETE /users/me/sessions/:id
+- DELETE /users/me/sessions (logout all)
+
+### **Frontend Pages:**
+- Landing page
+- Login page
+- Signup page
+- Forgot password page
+- Reset password page
+- Email verification page
+- Onboarding pages
+- Dashboard (protected)
+- Settings/profile page
+
+### **Email Templates:**
+- Verification email
+- Welcome email
+- Password reset email
+- Password changed confirmation
+- New device login alert
+- Account lockout notification
+
+### **Documentation:**
+- API documentation (Swagger)
+- Setup guide
+- Environment variables guide
+- Security policies
+- User guide
+
+---
+
+**This complete overview gives Cursor AI all the context needed to build a production-grade authentication system. Start with user registration, then login, then additional features.** 🚀
+
+-----------------------------
+
+
+# ✅ **YES - Using Supabase for Storage**
+
+---
+
+## 🗄️ **WHAT WE'RE USING SUPABASE FOR**
+
+### **✅ Supabase PostgreSQL Database**
+**Purpose:** Store ALL persistent user data
+
+**What gets stored:**
+```
+1. User accounts (users table)
+   - Full name, email, password hash
+   - Avatar URL, currency preference
+   - Email verification status
+   - Account settings
+
+2. OAuth connections (oauth_providers table)
+   - Google login info
+   - Provider user IDs
+   - OAuth tokens
+
+3. Password reset tokens (password_resets table)
+   - Secure reset tokens
+   - Expiry timestamps
+
+4. Email verification tokens (email_verifications table)
+   - Verification tokens
+   - Expiry timestamps
+
+5. Audit logs (audit_logs table)
+   - Security events
+   - Login history
+   - All user actions
+
+6. Future: All expense data, categories, budgets, etc.
+```
+
+**Why Supabase PostgreSQL:**
+- ✅ Managed (no DevOps)
+- ✅ PostgreSQL (industry standard)
+- ✅ Auto-backups
+- ✅ $25/month (affordable)
+- ✅ Scales to 100K+ users
+- ✅ Connection pooling built-in
+- ✅ Real-time capabilities (if needed later)
+
+---
+
+### **✅ Supabase Storage (for files)**
+**Purpose:** Store user-uploaded files
+
+**What gets stored:**
+```
+1. User avatars
+   - Profile pictures
+   - Path: avatars/{user_id}.jpg
+
+2. Receipt images (future)
+   - Expense receipts
+   - Path: receipts/{user_id}/{expense_id}.jpg
+
+3. Profile documents (future)
+   - Path: documents/{user_id}/
+```
+
+**Why Supabase Storage:**
+- ✅ Built-in to same service (simpler)
+- ✅ Automatic image transformations
+- ✅ CDN delivery
+- ✅ Presigned URLs (secure)
+- ✅ $0.021/GB/month (very cheap)
+- ✅ Integrated with auth
+
+**Alternative (if you prefer):**
+- AWS S3 (more control, similar pricing)
+- Cloudflare R2 (no egress fees)
+- Both work fine, Supabase Storage easier for MVP
+
+---
+
+## ❌ **WHAT WE'RE NOT USING SUPABASE FOR**
+
+### **❌ Supabase Auth (NOT using this)**
+**Why NOT:**
+- ❌ Less customization
+- ❌ Harder to modify flows
+- ❌ Vendor lock-in for critical feature
+- ❌ Limited business logic integration
+- ❌ We want FULL control
+
+**Instead:** Custom auth with NestJS + JWT + bcrypt
+
+---
+
+### **⚠️ Sessions (Using Redis, NOT Supabase)**
+**Why Redis instead:**
+- ✅ Redis is 10-100x faster for session lookups
+- ✅ Built-in expiration (TTL)
+- ✅ Better for high-frequency reads/writes
+- ✅ Industry standard for sessions
+
+**Where Redis is hosted:**
+- Start: Upstash Redis ($10/mo, serverless)
+- Scale: AWS ElastiCache (more expensive but powerful)
+
+**What's in Redis:**
+```
+session:{user_id}:{session_id} → session data
+refresh_token:{token} → user_id
+rate_limit:{ip} → request count
+token_blacklist:{token} → revoked tokens
+```
+
+---
+
+## 🏗️ **COMPLETE DATA ARCHITECTURE**
+
+```
+┌─────────────────────────────────────────────┐
+│           SUPABASE                          │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │   PostgreSQL Database               │   │
+│  │                                     │   │
+│  │   ✓ users                          │   │
+│  │   ✓ oauth_providers                │   │
+│  │   ✓ password_resets                │   │
+│  │   ✓ email_verifications            │   │
+│  │   ✓ audit_logs                     │   │
+│  │   ✓ expenses (future)              │   │
+│  │   ✓ budgets (future)               │   │
+│  │   ✓ categories (future)            │   │
+│  │                                     │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+│  ┌─────────────────────────────────────┐   │
+│  │   Supabase Storage                  │   │
+│  │                                     │   │
+│  │   ✓ avatars/                       │   │
+│  │   ✓ receipts/ (future)             │   │
+│  │   ✓ documents/ (future)            │   │
+│  │                                     │   │
+│  └─────────────────────────────────────┘   │
+│                                             │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│           UPSTASH REDIS                     │
+│                                             │
+│   ✓ Sessions (temporary, 30 days)          │
+│   ✓ Refresh tokens                         │
+│   ✓ Rate limiting counters                 │
+│   ✓ Token blacklist                        │
+│   ✓ Cache (future)                         │
+│                                             │
+└─────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────┐
+│           EMAIL SERVICE                     │
+│                                             │
+│   Start: SendGrid (100 emails/day free)    │
+│   Scale: AWS SES ($0.10/1000 emails)       │
+│                                             │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## 📝 **CONFIGURATION NEEDED**
+
+### **Supabase Setup:**
+
+**1. Database:**
+```
+✓ Create Supabase project
+✓ Get connection string
+✓ Create database tables (migrations)
+✓ Set up Row Level Security (RLS) policies
+✓ Create indexes
+✓ Enable connection pooling
+```
+
+**2. Storage:**
+```
+✓ Create "avatars" bucket (public)
+✓ Create "receipts" bucket (private)
+✓ Set up storage policies
+✓ Configure image transformations
+✓ Set file size limits (5MB for avatars)
+```
+
+**Environment Variables:**
+```env
+# Supabase Database
+SUPABASE_URL=https://xxxxx.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+DATABASE_URL=postgresql://postgres:[password]@db.xxxxx.supabase.co:5432/postgres
+
+# Supabase Storage
+SUPABASE_STORAGE_URL=https://xxxxx.supabase.co/storage/v1
+```
+
+---
+
+### **Redis Setup (Upstash):**
+
+```
+✓ Create Upstash account
+✓ Create Redis database (free tier to start)
+✓ Get connection URL
+✓ Test connection
+```
+
+**Environment Variables:**
+```env
+REDIS_URL=rediss://default:[password]@xxxxx.upstash.io:6379
+```
+
+---
+
+### **Email Service Setup:**
+
+**Start with SendGrid:**
+```
+✓ Create SendGrid account (free tier)
+✓ Verify sender email
+✓ Create API key
+✓ Configure SPF/DKIM records (later)
+```
+
+**Environment Variables:**
+```env
+# SendGrid
+SENDGRID_API_KEY=SG.xxxxx
+SENDGRID_FROM_EMAIL=noreply@expenseai.com
+SENDGRID_FROM_NAME=ExpenseAI Team
+
+# Email Templates
+EMAIL_VERIFICATION_TEMPLATE_ID=d-xxxxx
+PASSWORD_RESET_TEMPLATE_ID=d-xxxxx
+WELCOME_EMAIL_TEMPLATE_ID=d-xxxxx
+```
+
+---
+
+## 💾 **DATA FLOW EXAMPLES**
+
+### **Example 1: User Signs Up**
+
+```
+1. User submits signup form
+   ↓
+2. NestJS backend receives request
+   ↓
+3. Backend validates data
+   ↓
+4. Backend hashes password with bcrypt
+   ↓
+5. Backend connects to Supabase PostgreSQL
+   ↓
+6. INSERT INTO users (full_name, email, password_hash...)
+   ↓
+7. User record created in Supabase
+   ↓
+8. Backend generates JWT tokens
+   ↓
+9. Backend creates session in Upstash Redis
+   ↓
+10. Backend queues verification email (SendGrid)
+    ↓
+11. Return tokens + user data to frontend
+```
+
+### **Example 2: User Uploads Avatar**
+
+```
+1. User selects image file
+   ↓
+2. Frontend sends to: POST /users/me/avatar
+   ↓
+3. Backend validates file (type, size)
+   ↓
+4. Backend resizes image (400x400px)
+   ↓
+5. Backend connects to Supabase Storage
+   ↓
+6. Upload to: avatars/{user_id}.jpg
+   ↓
+7. Get public URL from Supabase
+   ↓
+8. UPDATE users SET avatar_url = 'https://...' in Supabase PostgreSQL
+   ↓
+9. Return new avatar URL to frontend
+```
+
+### **Example 3: User Logs In**
+
+```
+1. User submits email/password
+   ↓
+2. Backend queries Supabase PostgreSQL:
+   SELECT * FROM users WHERE email = ?
+   ↓
+3. Backend compares password hash (bcrypt)
+   ↓
+4. Backend generates new JWT tokens
+   ↓
+5. Backend stores session in Upstash Redis:
+   SET session:{user_id}:{session_id} {...}
+   EXPIRE 2592000 (30 days)
+   ↓
+6. Backend logs event in Supabase:
+   INSERT INTO audit_logs (action='login'...)
+   ↓
+7. Return tokens + user data to frontend
+```
+
+---
+
+## 🔒 **SUPABASE ROW LEVEL SECURITY (RLS)**
+
+**Important:** Even though we have custom auth, we should still use RLS for defense-in-depth.
+
+### **RLS Policies to Set Up:**
+
+```sql
+-- Users can only see their own data
+CREATE POLICY "Users can view own profile"
+ON users FOR SELECT
+USING (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile"
+ON users FOR UPDATE
+USING (auth.uid() = id);
+
+-- Audit logs are append-only
+CREATE POLICY "Anyone can insert audit logs"
+ON audit_logs FOR INSERT
+WITH CHECK (true);
+
+CREATE POLICY "Users can view own audit logs"
+ON audit_logs FOR SELECT
+USING (auth.uid() = user_id);
+
+-- OAuth providers protected
+CREATE POLICY "Users can view own oauth"
+ON oauth_providers FOR SELECT
+USING (auth.uid() = user_id);
+```
+
+**Note:** We're using Supabase's built-in `auth.uid()` which we'll populate from our JWT tokens.
+
+---
+
+## 💰 **COST BREAKDOWN**
+
+### **Monthly Costs:**
+
+**Supabase:**
+```
+Free tier:
+- 500MB database ✓ (enough for MVP)
+- 1GB file storage ✓
+- 2GB bandwidth ✓
+
+Pro tier ($25/mo):
+- 8GB database
+- 100GB file storage
+- 250GB bandwidth
+- Daily backups
+- Priority support
+
+When to upgrade: >1K active users
+```
+
+**Upstash Redis:**
+```
+Free tier:
+- 10,000 commands/day ✓ (enough for testing)
+
+Pay-as-you-go ($0.20 per 100K commands):
+- ~$10-20/mo for 1K users
+- ~$50-100/mo for 10K users
+
+Upgrade to fixed pricing when predictable
+```
+
+**SendGrid:**
+```
+Free tier:
+- 100 emails/day ✓ (good for MVP testing)
+
+Essentials ($20/mo):
+- 50,000 emails/month
+- Email API
+- Basic templates
+
+When to upgrade: Production launch
+
+Then migrate to AWS SES:
+- $0.10 per 1,000 emails
+- Save 90% at scale
+```
+
+**Total MVP Cost:**
+```
+Supabase: $0 (free tier)
+Redis: $0 (free tier)
+SendGrid: $0 (free tier)
+Domain: $12/year
+Vercel: $0 (hobby tier)
+Render: $0 (free tier, or $7/mo for basic)
+
+TOTAL: $0-7/month for MVP! 🎉
+```
+
+**Total Production Cost (1K users):**
+```
+Supabase: $25
+Upstash Redis: $10
+SendGrid: $20
+Vercel: $0
+Render: $50
+
+TOTAL: ~$105/month
+```
+
+---
+
+## ⚙️ **PRISMA CONFIGURATION**
+
+**Since we're using Supabase PostgreSQL with custom backend, we'll use Prisma ORM:**
+
+**prisma/schema.prisma:**
+```prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id                    String    @id @default(uuid())
+  fullName              String    @map("full_name")
+  email                 String    @unique
+  passwordHash          String?   @map("password_hash")
+  avatarUrl             String?   @map("avatar_url")
+  currencyCode          String    @default("USD") @map("currency_code")
+  emailVerified         Boolean   @default(false) @map("email_verified")
+  onboardingCompleted   Boolean   @default(false) @map("onboarding_completed")
+  lockedUntil           DateTime? @map("locked_until")
+  failedLoginAttempts   Int       @default(0) @map("failed_login_attempts")
+  lastFailedLoginAt     DateTime? @map("last_failed_login_at")
+  lastLoginAt           DateTime? @map("last_login_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  oauthProviders        OAuthProvider[]
+  passwordResets        PasswordReset[]
+  emailVerifications    EmailVerification[]
+  auditLogs             AuditLog[]
+
+  @@map("users")
+}
+
+model OAuthProvider {
+  id                String    @id @default(uuid())
+  userId            String    @map("user_id")
+  provider          String
+  providerUserId    String    @map("provider_user_id")
+  providerEmail     String?   @map("provider_email")
+  accessToken       String?   @map("access_token")
+  refreshToken      String?   @map("refresh_token")
+  tokenExpiresAt    DateTime? @map("token_expires_at")
+  profileData       Json?     @map("profile_data")
+  connectedAt       DateTime  @default(now()) @map("connected_at")
+  lastSyncedAt      DateTime  @default(now()) @map("last_synced_at")
+
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@map("oauth_providers")
+}
+
+model PasswordReset {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  tokenHash   String    @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("password_resets")
+}
+
+model EmailVerification {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  email       String
+  tokenHash   String    @map("token_hash")
+  expiresAt   DateTime  @map("expires_at")
+  verifiedAt  DateTime? @map("verified_at")
+  ipAddress   String?   @map("ip_address")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash])
+  @@map("email_verifications")
+}
+
+model AuditLog {
+  id            String    @id @default(uuid())
+  userId        String?   @map("user_id")
+  action        String
+  resourceType  String?   @map("resource_type")
+  resourceId    String?   @map("resource_id")
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @map("user_agent")
+  metadata      Json?
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+```
+
+---
+
+## ✅ **FINAL CONFIRMATION**
+
+**YES - We are using:**
+- ✅ **Supabase PostgreSQL** for all database storage (users, emails, audit logs, everything)
+- ✅ **Supabase Storage** for file uploads (avatars, receipts)
+- ✅ **Upstash Redis** for sessions, rate limiting, cache
+- ✅ **SendGrid/AWS SES** for email sending
+- ❌ **NOT using Supabase Auth** (custom auth instead)
+
+**This gives you:**
+- Managed database (no DevOps)
+- Affordable ($25/mo to start)
+- Scalable (to millions of users)
+- Simple (one provider for data + storage)
+- Flexible (can migrate if needed)
+
+**Ready to start building!** 🚀
