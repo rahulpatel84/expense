@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    // Target ES2021 - modern JavaScript features
+    "target": "ES2021",
+
+    // Use CommonJS modules (require/module.exports)
+    "module": "commonjs",
+
+    // Enable decorators (@Controller, @Injectable, etc.)
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    // Output compiled JavaScript to 'dist' folder
+    "outDir": "./dist",
+
+    // Where our TypeScript source code lives
+    "rootDir": "./src",
+
+    // Strict type checking (catches more errors)
+    "strict": true,
+
+    // Allow importing JSON files
+    "resolveJsonModule": true,
+
+    // Allow default imports from modules
+    "esModuleInterop": true,
+
+    // Skip type checking of library files (faster compilation)
+    "skipLibCheck": true,
+
+    // Create source maps for debugging
+    "sourceMap": true,
+
+    // Don't emit any files if there's a compilation error
+    "noEmitOnError": false,
+
+    // Include type definitions for Node.js
+    "types": ["node"]
+  },
+
+  // Which files to include in compilation
+  "include": ["src/**/*"],
+
+  // Which files to exclude
+  "exclude": ["node_modules", "dist", "test"]
+}

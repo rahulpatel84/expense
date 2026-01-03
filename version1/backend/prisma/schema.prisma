@@ -1,0 +1,358 @@
+// ============================================
+// PRISMA SCHEMA FILE
+// ============================================
+//
+// This file defines your database structure
+// Think of it as a blueprint for your database
+//
+// What happens here:
+// 1. You define models (tables)
+// 2. Run `npx prisma migrate dev` (creates tables in database)
+// 3. Run `npx prisma generate` (creates TypeScript code to query database)
+//
+// ============================================
+
+// ============================================
+// GENERATOR - Creates TypeScript Client
+// ============================================
+//
+// This tells Prisma to generate TypeScript code
+// After running `npx prisma generate`, you can use:
+// - prisma.user.create()
+// - prisma.user.findMany()
+// - etc.
+//
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================
+// DATASOURCE - Database Connection
+// ============================================
+//
+// Tells Prisma which database to use
+// - provider: Which database type (postgresql, mysql, sqlite, etc.)
+// - url: Connection string (from .env file)
+//
+datasource db {
+  provider = "postgresql"
+  // Note: With Prisma 7, the connection URL is now in prisma.config.ts
+  // This keeps the schema file clean and environment-agnostic
+}
+
+// ============================================
+// MODEL: User
+// ============================================
+//
+// This creates a "users" table in PostgreSQL
+//
+// What is a Model?
+// - A model = A table in the database
+// - Each field = A column in the table
+// - Each User object = A row in the table
+//
+// Example row:
+// id: "uuid-123"
+// fullName: "John Doe"
+// email: "john@email.com"
+// passwordHash: "$2b$12$abcd..."
+// createdAt: 2024-01-15 10:30:00
+//
+model User {
+  // ==========================================
+  // PRIMARY KEY - Unique identifier
+  // ==========================================
+  //
+  // @id: This is the primary key (unique for each user)
+  // @default(uuid()): Automatically generate a random UUID
+  //
+  // UUID example: "550e8400-e29b-41d4-a716-446655440000"
+  // Why UUID instead of 1, 2, 3?
+  // - More secure (can't guess next ID)
+  // - Works with distributed databases
+  //
+  id String @id @default(uuid())
+
+  // ==========================================
+  // USER INFORMATION
+  // ==========================================
+  //
+  // String: Text data
+  // @map("full_name"): Column name in database (uses snake_case)
+  //                    But in TypeScript we use: user.fullName (camelCase)
+  //
+  fullName String @map("full_name")
+
+  // @unique: No two users can have same email
+  // Database will enforce this (throws error if duplicate)
+  //
+  email String @unique
+
+  // ==========================================
+  // AUTHENTICATION
+  // ==========================================
+  //
+  // passwordHash: Hashed password (never store plain password!)
+  // String?: The ? means optional (for OAuth users who don't have password)
+  //
+  // Example:
+  // - Regular user: passwordHash = "$2b$12$abcd..." (bcrypt hash)
+  // - Google OAuth user: passwordHash = null (no password needed)
+  //
+  passwordHash String? @map("password_hash")
+
+  // Avatar URL: Link to profile picture
+  // Example: "https://storage.supabase.co/avatars/user123.jpg"
+  //
+  avatarUrl String? @map("avatar_url")
+
+  // User's preferred currency
+  // @default("USD"): If not specified, use USD
+  //
+  currencyCode String @default("USD") @map("currency_code")
+
+  // ==========================================
+  // EMAIL VERIFICATION
+  // ==========================================
+  //
+  // Boolean: true or false
+  // @default(false): New users start unverified
+  //
+  emailVerified Boolean @default(false) @map("email_verified")
+
+  // Whether user completed onboarding
+  onboardingCompleted Boolean @default(false) @map("onboarding_completed")
+
+  // ==========================================
+  // SECURITY - Account Lockout
+  // ==========================================
+  //
+  // If user fails login 5 times, lock account
+  // lockedUntil: When lock expires (null = not locked)
+  //
+  // DateTime?: Optional timestamp
+  // Example: "2024-01-15T10:30:00.000Z"
+  //
+  lockedUntil DateTime? @map("locked_until")
+
+  // Track failed login attempts
+  // Int: Integer (whole number)
+  //
+  failedLoginAttempts Int @default(0) @map("failed_login_attempts")
+
+  lastFailedLoginAt DateTime? @map("last_failed_login_at")
+
+  // ==========================================
+  // TIMESTAMPS
+  // ==========================================
+  //
+  // @default(now()): Set to current time when creating
+  // @updatedAt: Automatically update when row changes
+  //
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // ==========================================
+  // RELATIONSHIPS (One-to-Many)
+  // ==========================================
+  //
+  // One user can have many:
+  // - Password reset tokens
+  // - Email verifications
+  // - Audit logs
+  // - Expenses (future)
+  //
+  // PasswordReset[]: Array of password reset objects
+  //
+  passwordResets     PasswordReset[]
+  emailVerifications EmailVerification[]
+  auditLogs          AuditLog[]
+
+  // ==========================================
+  // TABLE NAME
+  // ==========================================
+  //
+  // @@map("users"): Actual table name in PostgreSQL
+  // Without this, Prisma would create table named "User" (capital U)
+  // We prefer lowercase: "users"
+  //
+  @@map("users")
+}
+
+// ============================================
+// MODEL: PasswordReset
+// ============================================
+//
+// When user forgets password, we create a reset token
+// This table stores those tokens
+//
+// Flow:
+// 1. User clicks "Forgot Password"
+// 2. We create PasswordReset record with random token
+// 3. Send email with link containing token
+// 4. User clicks link, we verify token
+// 5. Mark token as used
+//
+model PasswordReset {
+  id String @id @default(uuid())
+
+  // ==========================================
+  // FOREIGN KEY - Links to User
+  // ==========================================
+  //
+  // userId: Which user this reset is for
+  // user: The actual User object (Prisma relation)
+  //
+  // @relation: Defines relationship
+  // - fields: [userId] - Our column
+  // - references: [id] - User table's column
+  // - onDelete: Cascade - If user deleted, delete this too
+  //
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ==========================================
+  // TOKEN
+  // ==========================================
+  //
+  // We hash the token before storing (like passwords)
+  // Why? If someone hacks database, they can't use tokens
+  //
+  tokenHash String @map("token_hash")
+
+  // Token expires after 1 hour
+  expiresAt DateTime @map("expires_at")
+
+  // When was token used? (null = not used yet)
+  usedAt DateTime? @map("used_at")
+
+  // Track who requested (for security)
+  ipAddress String? @map("ip_address")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // ==========================================
+  // INDEXES - Make queries faster
+  // ==========================================
+  //
+  // @@index([tokenHash]): Create index on tokenHash column
+  // Why? Makes lookups by token super fast
+  //
+  // Without index: Database scans ALL rows (slow)
+  // With index: Database goes directly to row (fast)
+  //
+  @@index([tokenHash])
+  @@map("password_resets")
+}
+
+// ============================================
+// MODEL: EmailVerification
+// ============================================
+//
+// When user signs up, we send verification email
+// This table stores verification tokens
+//
+model EmailVerification {
+  id String @id @default(uuid())
+
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Email being verified (usually same as user.email)
+  email String
+
+  // Hashed token sent in verification email
+  tokenHash String @map("token_hash")
+
+  // Token expires after 24 hours
+  expiresAt DateTime @map("expires_at")
+
+  // When email was verified (null = not verified yet)
+  verifiedAt DateTime? @map("verified_at")
+
+  ipAddress String? @map("ip_address")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tokenHash])
+  @@index([userId])
+  @@map("email_verifications")
+}
+
+// ============================================
+// MODEL: AuditLog
+// ============================================
+//
+// Security logging - track everything users do
+//
+// Examples:
+// - User logged in
+// - User changed password
+// - User created expense
+// - Failed login attempt
+//
+// Why? Security, debugging, compliance
+//
+model AuditLog {
+  id String @id @default(uuid())
+
+  // userId can be null for system events
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // What happened?
+  // Examples: "USER_LOGIN", "PASSWORD_RESET", "EXPENSE_CREATED"
+  action String
+
+  // What was affected?
+  resourceType String? @map("resource_type")
+  resourceId   String? @map("resource_id")
+
+  // Where did it happen from?
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+
+  // Extra details as JSON
+  // Example: { "deviceName": "Chrome on MacBook", "location": "San Francisco" }
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Indexes for fast querying
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================
+// FUTURE MODELS (We'll add these later)
+// ============================================
+//
+// model Expense {
+//   id          String   @id @default(uuid())
+//   userId      String   @map("user_id")
+//   amount      Float
+//   category    String
+//   description String?
+//   date        DateTime
+//   createdAt   DateTime @default(now())
+//
+//   user User @relation(fields: [userId], references: [id])
+//
+//   @@map("expenses")
+// }
+//
+// model Budget {
+//   id        String   @id @default(uuid())
+//   userId    String   @map("user_id")
+//   category  String
+//   amount    Float
+//   period    String   // "monthly", "yearly"
+//   createdAt DateTime @default(now())
+//
+//   user User @relation(fields: [userId], references: [id])
+//
+//   @@map("budgets")
+// }
